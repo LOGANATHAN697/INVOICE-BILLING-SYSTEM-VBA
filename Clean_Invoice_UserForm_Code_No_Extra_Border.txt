@@ -1,0 +1,2953 @@
+Option Explicit
+
+Private Const UPI_ID As String = "Loganathan@HDFC"
+Private Const PAYEE_NAME As String = "Loganathan Billing Services"
+Private Const COMPANY_ADDRESS As String = "Tamil Nadu, Chennai - 600001"
+Private Const COMPANY_GSTIN As String = "GSTIN: 33MPSKL1766L9K7"
+Private Const COMPANY_PHONE As String = "Phone: +91 98543 12340"
+Private Const COMPANY_EMAIL As String = "Email: billing@example.com"
+Private Const COMPANY_LOGO_PATH As String = "E:\Loganathan\Loganathan LinkedIn\Project\VBA Code\company_logo.png"
+Private Const FORM_FONT_NAME As String = "Bookman Old Style"
+#If VBA7 Then
+    Private Declare PtrSafe Function URLDownloadToFile Lib "urlmon" Alias "URLDownloadToFileA" ( _
+        ByVal pCaller As LongPtr, _
+        ByVal szURL As String, _
+        ByVal szFileName As String, _
+        ByVal dwReserved As Long, _
+        ByVal lpfnCB As LongPtr) As Long
+#Else
+    
+#End If
+
+Private WithEvents txtInvoiceNoEvt As MSForms.TextBox
+Private WithEvents txtPhoneEvt As MSForms.TextBox
+Private WithEvents txtQtyEvt As MSForms.TextBox
+Private WithEvents txtRateEvt As MSForms.TextBox
+Private WithEvents txtPaidEvt As MSForms.TextBox
+
+Private WithEvents cmbStatusEvt As MSForms.ComboBox
+Private WithEvents cmbProductEvt As MSForms.ComboBox
+Private WithEvents cmbGSTEvt As MSForms.ComboBox
+
+Private WithEvents cmdSaveEvt As MSForms.CommandButton
+Private WithEvents cmdSearchEvt As MSForms.CommandButton
+Private WithEvents cmdUpdateEvt As MSForms.CommandButton
+Private WithEvents cmdDeleteEvt As MSForms.CommandButton
+Private WithEvents cmdClearEvt As MSForms.CommandButton
+Private WithEvents cmdPDFEvt As MSForms.CommandButton
+Private WithEvents cmdCloseEvt As MSForms.CommandButton
+Private WithEvents cmdAddItemEvt As MSForms.CommandButton
+Private WithEvents cmdRemoveItemEvt As MSForms.CommandButton
+
+Private currentInvoiceRow As Long
+Private isCleaningText As Boolean
+Private isLoadingProducts As Boolean
+
+Private Sub UserForm_Initialize()
+
+    Call BuildInvoiceForm
+    Call ApplyUserFormBookmanFont
+    Call CreateInvoiceSheets
+    Call SetDefaultValues
+    
+
+End Sub
+
+
+Private Sub OnlyInteger(ByVal KeyAscii As MSForms.ReturnInteger)
+    'Allow only 0 to 9 and Backspace while typing
+    If Not (KeyAscii >= 48 And KeyAscii <= 57) And KeyAscii <> 8 Then
+        KeyAscii = 0
+        Beep
+    End If
+End Sub
+Private Sub AddCompanyLogoInPDF(ByVal ws As Worksheet)
+
+    Dim logoPic As Shape
+
+    If Dir(COMPANY_LOGO_PATH) = "" Then
+        MsgBox "Logo file not found:" & vbCrLf & COMPANY_LOGO_PATH, _
+               vbExclamation, "Logo Missing"
+        Exit Sub
+    End If
+
+    On Error Resume Next
+    ws.Shapes("Company_Logo").Delete
+    On Error GoTo Logo_Error
+
+    Set logoPic = ws.Shapes.AddPicture( _
+        fileName:=COMPANY_LOGO_PATH, _
+        LinkToFile:=msoFalse, _
+        SaveWithDocument:=msoTrue, _
+        Left:=ws.Range("d4").Left + 4, _
+        Top:=ws.Range("d4").Top + 1, _
+        Width:=400, _
+        Height:=250 _
+    )
+
+    With logoPic
+        .Name = "Company_Logo"
+        .Placement = xlMoveAndSize
+        .LockAspectRatio = msoFalse
+        .ZOrder msoBringToFront
+    End With
+
+    Exit Sub
+
+Logo_Error:
+    MsgBox "Logo insert failed." & vbCrLf & _
+           "Reason: " & Err.Description, _
+           vbExclamation, "Logo Error"
+
+End Sub
+
+Private Sub KeepOnlyDigits(ByVal txt As MSForms.TextBox, Optional ByVal maxLen As Long = 0)
+
+    Dim oldText As String
+    Dim newText As String
+    Dim i As Long
+    Dim ch As String
+
+    If isCleaningText Then Exit Sub
+    If txt Is Nothing Then Exit Sub
+
+    oldText = txt.Text
+
+    For i = 1 To Len(oldText)
+        ch = Mid$(oldText, i, 1)
+        If ch >= "0" And ch <= "9" Then
+            newText = newText & ch
+        End If
+    Next i
+
+    If maxLen > 0 Then
+        newText = Left$(newText, maxLen)
+    End If
+
+    If oldText <> newText Then
+        isCleaningText = True
+        txt.Text = newText
+        txt.SelStart = Len(txt.Text)
+        isCleaningText = False
+    End If
+
+End Sub
+
+Private Sub txtPhoneEvt_KeyPress(ByVal KeyAscii As MSForms.ReturnInteger)
+    OnlyInteger KeyAscii
+End Sub
+
+Private Sub txtQtyEvt_KeyPress(ByVal KeyAscii As MSForms.ReturnInteger)
+    OnlyInteger KeyAscii
+End Sub
+
+Private Sub txtRateEvt_KeyPress(ByVal KeyAscii As MSForms.ReturnInteger)
+    OnlyInteger KeyAscii
+End Sub
+
+
+Private Sub txtPhoneEvt_Change()
+    Call KeepOnlyDigits(txtPhoneEvt, 10)
+End Sub
+
+Private Sub BuildInvoiceForm()
+
+    Dim idx As Long
+
+    For idx = Me.Controls.Count - 1 To 0 Step -1
+        Me.Controls.Remove Me.Controls(idx).Name
+    Next idx
+
+    With Me
+        .Caption = "Invoice Billing and Payment Analytics System"
+        .Width = 760
+        .Height = 650
+        .BackColor = RGB(241, 245, 249)
+    End With
+
+    Call AddLabel("lblHeader", "INVOICE BILLING & PAYMENT ANALYTICS SYSTEM", 20, 15, 700, 36, _
+                  RGB(30, 64, 175), RGB(255, 255, 255), 17, True)
+
+    Call AddLabel("lblSubTitle", "Create invoice, track payment status, and prepare billing reports", _
+                  25, 55, 690, 18, RGB(241, 245, 249), RGB(71, 85, 105), 10, False)
+
+    Call AddFrame("fraInvoice", "INVOICE DETAILS", 25, 85, 330, 180)
+
+    Call AddLabel("lblInvoiceNo", "Invoice No", 45, 113, 100, 22, RGB(248, 250, 252), RGB(15, 23, 42), 10, True)
+    Call AddTextBox("txtInvoiceNo", 155, 110, 170, 24)
+
+    Call AddLabel("lblInvoiceDate", "Invoice Date", 40, 151, 100, 22, RGB(248, 250, 252), RGB(15, 23, 42), 10, True)
+    Call AddTextBox("txtInvoiceDate", 155, 148, 170, 24)
+
+    Call AddLabel("lblCustomer", "Customer Name", 45, 189, 100, 22, RGB(248, 250, 252), RGB(15, 23, 42), 10, True)
+    Call AddTextBox("txtCustomerName", 155, 186, 170, 24)
+
+    Call AddLabel("lblPhone", "Phone", 45, 227, 100, 22, RGB(248, 250, 252), RGB(15, 23, 42), 10, True)
+    Call AddTextBox("txtPhone", 155, 224, 170, 24)
+
+    Call AddFrame("fraCustomer", "CUSTOMER CONTACT", 385, 85, 330, 180)
+
+    Call AddLabel("lblEmail", "Email", 405, 113, 100, 22, RGB(248, 250, 252), RGB(15, 23, 42), 10, True)
+    Call AddTextBox("txtEmail", 515, 110, 170, 24)
+
+    Call AddLabel("lblCity", "City", 405, 151, 100, 22, RGB(248, 250, 252), RGB(15, 23, 42), 10, True)
+    Call AddTextBox("txtCity", 515, 148, 170, 24)
+
+    Call AddLabel("lblStatus", "Payment Status", 405, 189, 100, 22, RGB(248, 250, 252), RGB(15, 23, 42), 10, True)
+    Call AddComboBox("cmbStatus", 515, 186, 170, 24)
+
+    With Me.Controls("cmbStatus")
+        .AddItem "Paid"
+        .AddItem "Pending"
+        .AddItem "Partial"
+    End With
+
+    Call AddLabel("lblMode", "Payment Mode", 405, 227, 100, 22, RGB(248, 250, 252), RGB(15, 23, 42), 10, True)
+    Call AddComboBox("cmbPaymentMode", 515, 224, 170, 24)
+
+    With Me.Controls("cmbPaymentMode")
+        .AddItem "Cash"
+        .AddItem "UPI"
+        .AddItem "Bank Transfer"
+        .AddItem "Card"
+        .AddItem "Cheque"
+    End With
+
+    Call AddFrame("fraProduct", "PRODUCT & AMOUNT DETAILS", 25, 265, 690, 280)
+
+    Call AddLabel("lblProduct", "Product", 45, 295, 80, 22, RGB(248, 250, 252), RGB(15, 23, 42), 10, True)
+    Call AddComboBox("txtProduct", 125, 292, 150, 24)
+    Call LoadProductDropdown
+    Call AddLabel("lblQty", "Qty", 295, 295, 40, 22, RGB(248, 250, 252), RGB(15, 23, 42), 10, True)
+    Call AddTextBox("txtQty", 335, 292, 70, 24)
+
+    Call AddLabel("lblRate", "Rate (" & RupeeSymbol() & ")", 425, 295, 55, 22, RGB(248, 250, 252), RGB(15, 23, 42), 10, True)
+    Call AddTextBox("txtRate", 475, 292, 50, 24)
+
+    Call AddLabel("lblGST", "GST %", 580, 295, 55, 22, RGB(248, 250, 252), RGB(15, 23, 42), 10, True)
+    Call AddComboBox("txtGST", 635, 292, 55, 24)
+    
+    With Me.Controls("txtGST")
+        .AddItem "0%"
+        .AddItem "5%"
+        .AddItem "12%"
+        .AddItem "18%"
+        .AddItem "28%"
+    End With
+
+    Call AddLabel("lblTotal", "Total (" & RupeeSymbol() & ")", 45, 333, 100, 22, RGB(248, 250, 252), RGB(15, 23, 42), 10, True)
+    Call AddTextBox("txtTotalAmount", 155, 330, 120, 24)
+
+    Call AddLabel("lblPaid", "Paid (" & RupeeSymbol() & ")", 295, 333, 90, 22, RGB(248, 250, 252), RGB(15, 23, 42), 10, True)
+    Call AddTextBox("txtPaidAmount", 390, 330, 100, 24)
+
+    Call AddLabel("lblBalance", "Balance (" & RupeeSymbol() & ")", 505, 333, 110, 22, RGB(248, 250, 252), RGB(15, 23, 42), 10, True)
+    Call AddTextBox("txtBalanceAmount", 620, 330, 70, 24)
+
+    Call AddButton("cmdAddItem", "ADD ITEM", 45, 368, 120, 28, RGB(34, 197, 94))
+    Call AddButton("cmdRemoveItem", "REMOVE ITEM", 180, 368, 130, 28, RGB(239, 68, 68))
+
+    'Clean product details table - no extra outside border
+    ' Clean outer border for full product table
+    Call AddProductDetailsBox("boxItems", 43, 403, 649, 116)
+    
+    Call AddItemHeader("hdrSNo", "S.No", 45, 405, 45)
+    Call AddItemHeader("hdrProduct", "Product", 90, 405, 165)
+    Call AddItemHeader("hdrQty", "Qty", 255, 405, 45)
+    Call AddItemHeader("hdrRate", "Rate", 300, 405, 70)
+    Call AddItemHeader("hdrAmount", "Amount", 370, 405, 85)
+    Call AddItemHeader("hdrGST", "GST%", 455, 405, 55)
+    Call AddItemHeader("hdrGSTAmt", "GST Amt", 510, 405, 80)
+    Call AddItemHeader("hdrTotal", "Total", 590, 405, 90)
+    
+    Call AddListBox("lstItems", 45, 429, 645, 86)
+    Call AddListBox("lstItems", 45, 430, 645, 86)
+
+    Call AddButton("cmdSave", "SAVE", 25, 555, 85, 32, RGB(34, 197, 94))
+    Call AddButton("cmdSearch", "SEARCH", 120, 555, 85, 32, RGB(37, 99, 235))
+    Call AddButton("cmdUpdate", "UPDATE", 215, 555, 85, 32, RGB(245, 158, 11))
+    Call AddButton("cmdDelete", "DELETE", 310, 555, 85, 32, RGB(239, 68, 68))
+    Call AddButton("cmdClear", "CLEAR", 405, 555, 85, 32, RGB(14, 165, 233))
+    Call AddButton("cmdPDF", "PDF", 500, 555, 85, 32, RGB(124, 58, 237))
+    Call AddButton("cmdClose", "CLOSE", 595, 555, 85, 32, RGB(75, 85, 99))
+
+End Sub
+
+Private Function ValidatePhoneNumber() As Boolean
+
+    Dim phoneNo As String
+
+    phoneNo = Trim(Me.Controls("txtPhone").Text)
+    phoneNo = Replace(phoneNo, " ", "")
+    phoneNo = Replace(phoneNo, "-", "")
+
+    If phoneNo = "" Then
+        MsgBox "Must be a 10-digit number", vbExclamation, "Invalid Phone Number"
+        Me.Controls("txtPhone").SetFocus
+        ValidatePhoneNumber = False
+        Exit Function
+    End If
+
+    If Len(phoneNo) <> 10 Then
+        MsgBox "Must be a 10-digit number", vbExclamation, "Invalid Phone Number"
+        Me.Controls("txtPhone").SetFocus
+        ValidatePhoneNumber = False
+        Exit Function
+    End If
+
+    If Not phoneNo Like "##########" Then
+        MsgBox "Must be a 10-digit number", vbExclamation, "Invalid Phone Number"
+        Me.Controls("txtPhone").SetFocus
+        ValidatePhoneNumber = False
+        Exit Function
+    End If
+
+    Me.Controls("txtPhone").Text = phoneNo
+    ValidatePhoneNumber = True
+
+End Function
+
+
+
+Private Sub AddFrame(ByVal ctrlName As String, ByVal ctrlCaption As String, _
+                     ByVal leftPos As Single, ByVal topPos As Single, _
+                     ByVal ctrlWidth As Single, ByVal ctrlHeight As Single)
+
+    Dim lbl As MSForms.Label
+
+    Set lbl = Me.Controls.Add("Forms.Label.1", ctrlName, True)
+
+    With lbl
+        .Caption = ctrlCaption
+        .Left = leftPos
+        .Top = topPos - 5
+        .Width = ctrlWidth
+        .Height = 24
+        .BackColor = RGB(241, 245, 249)
+        .ForeColor = RGB(30, 64, 175)
+        .Font.Name = FORM_FONT_NAME
+        .Font.Size = 11
+        .Font.Bold = True
+        .TextAlign = fmTextAlignLeft
+    End With
+
+End Sub
+Private Sub ApplyUserFormBookmanFont()
+
+    Dim ctrl As MSForms.Control
+
+    For Each ctrl In Me.Controls
+        On Error Resume Next
+        ctrl.Font.Name = FORM_FONT_NAME
+        On Error GoTo 0
+    Next ctrl
+
+End Sub
+
+
+Private Sub AddProductDetailsBox(ByVal ctrlName As String, ByVal leftPos As Single, _
+                                 ByVal topPos As Single, ByVal ctrlWidth As Single, _
+                                 ByVal ctrlHeight As Single)
+
+    Dim lbl As MSForms.Label
+
+    Set lbl = Me.Controls.Add("Forms.Label.1", ctrlName, True)
+
+    With lbl
+        .Caption = ""
+        .Left = leftPos
+        .Top = topPos
+        .Width = ctrlWidth
+        .Height = ctrlHeight
+        .BackColor = RGB(255, 255, 255)
+        .BorderStyle = fmBorderStyleSingle
+        .SpecialEffect = fmSpecialEffectFlat
+        .ZOrder 1
+    End With
+
+End Sub
+
+Private Sub AddItemHeader(ByVal ctrlName As String, ByVal ctrlCaption As String, _
+                          ByVal leftPos As Single, ByVal topPos As Single, _
+                          ByVal ctrlWidth As Single)
+
+    Dim lbl As MSForms.Label
+
+    Set lbl = Me.Controls.Add("Forms.Label.1", ctrlName, True)
+
+    With lbl
+        .Caption = ctrlCaption
+        .Left = leftPos
+        .Top = topPos
+        .Width = ctrlWidth
+        .Height = 24
+        .BackColor = RGB(30, 64, 175)
+        .ForeColor = RGB(255, 255, 255)
+        .Font.Name = "Segoe UI"
+        .Font.Size = 9
+        .Font.Bold = True
+        .TextAlign = fmTextAlignCenter
+        .BorderStyle = fmBorderStyleSingle
+        .SpecialEffect = fmSpecialEffectFlat
+        .ZOrder 0
+    End With
+
+End Sub
+
+Private Sub AddLabel(ByVal ctrlName As String, ByVal ctrlCaption As String, _
+                     ByVal leftPos As Single, ByVal topPos As Single, _
+                     ByVal ctrlWidth As Single, ByVal ctrlHeight As Single, _
+                     ByVal bgColor As Long, ByVal fontColor As Long, _
+                     ByVal fontSize As Integer, ByVal isBold As Boolean)
+
+    Dim lbl As MSForms.Label
+
+    Set lbl = Me.Controls.Add("Forms.Label.1", ctrlName, True)
+
+    With lbl
+        .Caption = ctrlCaption
+        .Left = leftPos
+        .Top = topPos
+        .Width = ctrlWidth
+        .Height = ctrlHeight
+        .BackColor = bgColor
+        .ForeColor = fontColor
+        .Font.Name = "Segoe UI"
+        .Font.Size = fontSize
+        .Font.Bold = isBold
+        .TextAlign = fmTextAlignCenter
+    End With
+
+End Sub
+
+Private Sub AddTextBox(ByVal ctrlName As String, ByVal leftPos As Single, _
+                       ByVal topPos As Single, ByVal ctrlWidth As Single, _
+                       ByVal ctrlHeight As Single)
+
+    Dim txt As MSForms.TextBox
+
+    Set txt = Me.Controls.Add("Forms.TextBox.1", ctrlName, True)
+
+    With txt
+        .Left = leftPos
+        .Top = topPos
+        .Width = ctrlWidth
+        .Height = ctrlHeight
+        .BackColor = RGB(255, 255, 255)
+        .ForeColor = RGB(15, 23, 42)
+        .Font.Name = "Segoe UI"
+        .Font.Size = 10
+        .BorderStyle = fmBorderStyleSingle
+        .TextAlign = fmTextAlignCenter
+        .Enabled = True
+        .Locked = False
+        .TabStop = True
+    End With
+
+    If ctrlName = "txtTotalAmount" Or ctrlName = "txtBalanceAmount" Then
+        txt.Locked = True
+        txt.BackColor = RGB(229, 231, 235)
+    End If
+
+    If ctrlName = "txtInvoiceNo" Then Set txtInvoiceNoEvt = txt
+    If ctrlName = "txtPhone" Then Set txtPhoneEvt = txt
+    If ctrlName = "txtQty" Then Set txtQtyEvt = txt
+    If ctrlName = "txtRate" Then Set txtRateEvt = txt
+    If ctrlName = "txtPaidAmount" Then Set txtPaidEvt = txt
+
+End Sub
+
+Private Sub AddComboBox(ByVal ctrlName As String, ByVal leftPos As Single, _
+                        ByVal topPos As Single, ByVal ctrlWidth As Single, _
+                        ByVal ctrlHeight As Single)
+
+    Dim cmb As MSForms.ComboBox
+
+    Set cmb = Me.Controls.Add("Forms.ComboBox.1", ctrlName, True)
+
+    With cmb
+        .Left = leftPos
+        .Top = topPos
+        .Width = ctrlWidth
+        .Height = ctrlHeight
+        .BackColor = RGB(255, 255, 255)
+        .ForeColor = RGB(15, 23, 42)
+        .Font.Name = "Segoe UI"
+        .Font.Size = 10
+        .Style = fmStyleDropDownList
+        .TextAlign = fmTextAlignCenter
+    End With
+
+    If ctrlName = "cmbStatus" Then Set cmbStatusEvt = cmb
+    If ctrlName = "txtProduct" Then Set cmbProductEvt = cmb
+    If ctrlName = "txtGST" Then Set cmbGSTEvt = cmb
+
+End Sub
+Private Function GetProductPrice(ByVal productName As String) As Double
+
+    Select Case productName
+        Case "Mobile Phone": GetProductPrice = 15000
+        Case "Laptop": GetProductPrice = 45000
+        Case "Wireless Mouse": GetProductPrice = 650
+        Case "Keyboard": GetProductPrice = 850
+        Case "Bluetooth Speaker": GetProductPrice = 1500
+        Case "Earphones": GetProductPrice = 750
+        Case "Power Bank": GetProductPrice = 1200
+        Case "Smart Watch": GetProductPrice = 2500
+        Case "USB Cable": GetProductPrice = 250
+        Case "Mobile Charger": GetProductPrice = 500
+        Case "LED Monitor": GetProductPrice = 8500
+        Case "Printer": GetProductPrice = 6000
+        Case "Hard Disk": GetProductPrice = 4200
+        Case "Pen Drive": GetProductPrice = 600
+        Case "WiFi Router": GetProductPrice = 1800
+        Case "CCTV Camera": GetProductPrice = 3500
+        Case "Office Chair": GetProductPrice = 4800
+        Case Else: GetProductPrice = 0
+    End Select
+
+End Function
+
+Private Function IsProductInList(ByVal productName As String) As Boolean
+
+    Dim i As Long
+    Dim lst As MSForms.ListBox
+
+    On Error Resume Next
+    Set lst = Me.Controls("lstItems")
+    On Error GoTo 0
+
+    If lst Is Nothing Then Exit Function
+
+    With lst
+        For i = 0 To .ListCount - 1
+            If StrComp(Trim$(.List(i, 1)), Trim$(productName), vbTextCompare) = 0 Then
+                IsProductInList = True
+                Exit Function
+            End If
+        Next i
+    End With
+
+End Function
+
+Private Sub LoadProductDropdown()
+
+    Dim productList As Variant
+    Dim i As Long
+    Dim cmb As MSForms.ComboBox
+
+    productList = Array( _
+        "Mobile Phone", _
+        "Laptop", _
+        "Wireless Mouse", _
+        "Keyboard", _
+        "Bluetooth Speaker", _
+        "Earphones", _
+        "Power Bank", _
+        "Smart Watch", _
+        "USB Cable", _
+        "Mobile Charger", _
+        "LED Monitor", _
+        "Printer", _
+        "Hard Disk", _
+        "Pen Drive", _
+        "WiFi Router", _
+        "CCTV Camera", _
+        "Office Chair")
+
+    Set cmb = Me.Controls("txtProduct")
+
+    isLoadingProducts = True
+    cmb.Clear
+
+    For i = LBound(productList) To UBound(productList)
+        If Not IsProductInList(CStr(productList(i))) Then
+            cmb.AddItem CStr(productList(i))
+        End If
+    Next i
+
+    cmb.ListIndex = -1
+    cmb.Value = ""
+    isLoadingProducts = False
+
+End Sub
+
+Private Sub cmbProductEvt_Change()
+
+    Dim price As Double
+
+    If isLoadingProducts Then Exit Sub
+
+    price = GetProductPrice(Me.Controls("txtProduct").Value)
+
+    If price > 0 Then
+        Me.Controls("txtRate").Text = Format(price, "0")
+    Else
+        Me.Controls("txtRate").Text = ""
+    End If
+
+    Call CalculateInvoiceAmount
+
+End Sub
+
+Private Sub cmbGSTEvt_Change()
+    Call CalculateInvoiceAmount
+End Sub
+
+Private Sub AddListBox(ByVal ctrlName As String, ByVal leftPos As Single, _
+                       ByVal topPos As Single, ByVal ctrlWidth As Single, _
+                       ByVal ctrlHeight As Single)
+
+    Dim lst As MSForms.ListBox
+
+    Set lst = Me.Controls.Add("Forms.ListBox.1", ctrlName, True)
+
+    With lst
+        .Left = leftPos
+        .Top = topPos
+        .Width = ctrlWidth
+        .Height = ctrlHeight
+        .BackColor = RGB(255, 255, 255)
+        .ForeColor = RGB(0, 0, 0)
+        .Font.Name = "Segoe UI"
+        .Font.Size = 9
+        .ColumnCount = 8
+        .ColumnWidths = "45;165;45;70;85;55;80;90"
+        .TextAlign = fmTextAlignCenter
+        .BorderStyle = fmBorderStyleNone
+        .SpecialEffect = fmSpecialEffectFlat
+        .IntegralHeight = False
+        .ZOrder 0
+    End With
+
+End Sub
+
+Private Sub AddButton(ByVal ctrlName As String, ByVal ctrlCaption As String, _
+                      ByVal leftPos As Single, ByVal topPos As Single, _
+                      ByVal ctrlWidth As Single, ByVal ctrlHeight As Single, _
+                      ByVal bgColor As Long)
+
+    Dim btn As MSForms.CommandButton
+
+    Set btn = Me.Controls.Add("Forms.CommandButton.1", ctrlName, True)
+
+    With btn
+        .Caption = ctrlCaption
+        .Left = leftPos
+        .Top = topPos
+        .Width = ctrlWidth
+        .Height = ctrlHeight
+        .BackColor = bgColor
+        .ForeColor = RGB(255, 255, 255)
+        .Font.Name = "Segoe UI"
+        .Font.Size = 10
+        .Font.Bold = True
+        .TakeFocusOnClick = False
+    End With
+
+    If ctrlName = "cmdSave" Then Set cmdSaveEvt = btn
+    If ctrlName = "cmdSearch" Then Set cmdSearchEvt = btn
+    If ctrlName = "cmdUpdate" Then Set cmdUpdateEvt = btn
+    If ctrlName = "cmdDelete" Then Set cmdDeleteEvt = btn
+    If ctrlName = "cmdClear" Then Set cmdClearEvt = btn
+    If ctrlName = "cmdPDF" Then Set cmdPDFEvt = btn
+    If ctrlName = "cmdClose" Then Set cmdCloseEvt = btn
+    If ctrlName = "cmdAddItem" Then Set cmdAddItemEvt = btn
+    If ctrlName = "cmdRemoveItem" Then Set cmdRemoveItemEvt = btn
+
+End Sub
+
+Private Function RupeeSymbol() As String
+    RupeeSymbol = ChrW(&H20B9)
+End Function
+
+Private Sub CreateInvoiceSheets()
+
+    Dim ws As Worksheet
+    Dim itemWs As Worksheet
+
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets("Invoice_Data")
+    Set itemWs = ThisWorkbook.Worksheets("Invoice_Items")
+    On Error GoTo 0
+
+    If ws Is Nothing Then
+        Set ws = ThisWorkbook.Worksheets.Add
+        ws.Name = "Invoice_Data"
+    End If
+
+    If itemWs Is Nothing Then
+        Set itemWs = ThisWorkbook.Worksheets.Add
+        itemWs.Name = "Invoice_Items"
+    End If
+
+    If Trim(ws.Range("A1").Value) = "" Then
+        ws.Range("A1").Value = "Invoice No"
+        ws.Range("B1").Value = "Invoice Date Time"
+        ws.Range("C1").Value = "Customer Name"
+        ws.Range("D1").Value = "Phone"
+        ws.Range("E1").Value = "Email"
+        ws.Range("F1").Value = "City"
+        ws.Range("G1").Value = "Payment Status"
+        ws.Range("H1").Value = "Payment Mode"
+        ws.Range("I1").Value = "Product Summary"
+        ws.Range("J1").Value = "Item Count"
+        ws.Range("K1").Value = "Total Amount"
+        ws.Range("L1").Value = "Paid Amount"
+        ws.Range("M1").Value = "Balance Amount"
+
+        With ws.Range("A1:M1")
+            .Font.Bold = True
+            .Interior.Color = RGB(30, 64, 175)
+            .Font.Color = RGB(255, 255, 255)
+        End With
+    End If
+
+    If Trim(itemWs.Range("A1").Value) = "" Then
+        itemWs.Range("A1").Value = "Invoice No"
+        itemWs.Range("B1").Value = "Line No"
+        itemWs.Range("C1").Value = "Product"
+        itemWs.Range("D1").Value = "Quantity"
+        itemWs.Range("E1").Value = "Rate"
+        itemWs.Range("F1").Value = "Amount"
+        itemWs.Range("G1").Value = "GST %"
+        itemWs.Range("H1").Value = "GST Amount"
+        itemWs.Range("I1").Value = "Line Total"
+
+        With itemWs.Range("A1:I1")
+            .Font.Bold = True
+            .Interior.Color = RGB(30, 64, 175)
+            .Font.Color = RGB(255, 255, 255)
+        End With
+    End If
+
+    ws.Columns("A:M").AutoFit
+    itemWs.Columns("A:I").AutoFit
+
+End Sub
+
+Private Function GetNextInvoiceNo() As String
+
+    Dim ws As Worksheet
+    Dim lastRow As Long
+    Dim nextNo As Long
+
+    Set ws = ThisWorkbook.Worksheets("Invoice_Data")
+
+    lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
+
+    If lastRow < 2 Then
+        nextNo = 1
+    Else
+        nextNo = lastRow
+    End If
+
+    GetNextInvoiceNo = "INV-" & Format(nextNo, "0000")
+
+End Function
+
+Private Sub SetDefaultValues()
+
+    Me.Controls("txtInvoiceNo").Text = GetNextInvoiceNo()
+    Me.Controls("txtInvoiceDate").Text = Format(Now, "dd-mm-yyyy hh:mm AM/PM")
+    Me.Controls("txtGST").Value = "18%"
+    Me.Controls("cmbStatus").Value = "Pending"
+    Me.Controls("cmbPaymentMode").Value = "UPI"
+
+    currentInvoiceRow = 0
+
+End Sub
+
+Private Function ItemListCount() As Long
+
+    On Error Resume Next
+    ItemListCount = Me.Controls("lstItems").ListCount
+    On Error GoTo 0
+
+End Function
+
+Private Sub CalculateSingleLineAmount()
+
+    Dim qty As Double
+    Dim rate As Double
+    Dim gstPercent As Double
+    Dim amountBeforeGST As Double
+    Dim gstAmount As Double
+    Dim totalAmount As Double
+    Dim paidAmount As Double
+    Dim balanceAmount As Double
+
+    qty = Val(Me.Controls("txtQty").Text)
+    rate = Val(Me.Controls("txtRate").Text)
+    gstPercent = Val(Me.Controls("txtGST").Text)
+
+    amountBeforeGST = qty * rate
+    gstAmount = amountBeforeGST * gstPercent / 100
+    totalAmount = amountBeforeGST + gstAmount
+
+    paidAmount = Val(Me.Controls("txtPaidAmount").Text)
+
+    If paidAmount < 0 Then paidAmount = 0
+    If paidAmount > totalAmount Then paidAmount = totalAmount
+
+    balanceAmount = totalAmount - paidAmount
+    If balanceAmount < 0 Then balanceAmount = 0
+
+    Me.Controls("txtPaidAmount").Locked = False
+    Me.Controls("txtPaidAmount").Enabled = True
+    Me.Controls("txtPaidAmount").BackColor = RGB(255, 255, 255)
+
+    isCleaningText = True
+    Me.Controls("txtTotalAmount").Text = Format(totalAmount, "0.00")
+    Me.Controls("txtPaidAmount").Text = Format(paidAmount, "0.00")
+    Me.Controls("txtBalanceAmount").Text = Format(balanceAmount, "0.00")
+    isCleaningText = False
+
+End Sub
+
+Private Sub CalculateInvoiceAmount()
+
+    If ItemListCount() > 0 Then
+        Call RecalculateMultipleItemsTotal
+    Else
+        Call CalculateSingleLineAmount
+    End If
+
+End Sub
+
+Private Sub AddProductItem()
+
+    Dim productName As String
+    Dim qty As Double
+    Dim rate As Double
+    Dim gstPercent As Double
+    Dim amountBeforeGST As Double
+    Dim gstAmount As Double
+    Dim totalWithGST As Double
+    Dim rowNo As Long
+
+    productName = Trim(Me.Controls("txtProduct").Value)
+    qty = Val(Me.Controls("txtQty").Text)
+    rate = Val(Me.Controls("txtRate").Text)
+    gstPercent = Val(Me.Controls("txtGST").Value)
+
+    If productName = "" Then
+        MsgBox "Please select product", vbExclamation, "Product"
+        Me.Controls("txtProduct").SetFocus
+        Exit Sub
+    End If
+
+    If qty <= 0 Then
+        MsgBox "Please enter quantity", vbExclamation, "Qty"
+        Me.Controls("txtQty").SetFocus
+        Exit Sub
+    End If
+
+    If rate <= 0 Then
+        MsgBox "Rate missing. Please select product again.", vbExclamation, "Rate"
+        Me.Controls("txtProduct").SetFocus
+        Exit Sub
+    End If
+
+    If IsProductInList(productName) Then
+        MsgBox "This product already added.", vbExclamation, "Duplicate Product"
+        Exit Sub
+    End If
+
+    amountBeforeGST = qty * rate
+    gstAmount = amountBeforeGST * gstPercent / 100
+    totalWithGST = amountBeforeGST + gstAmount
+
+    With Me.Controls("lstItems")
+        .AddItem CStr(.ListCount + 1)
+        rowNo = .ListCount - 1
+
+        .List(rowNo, 1) = productName
+        .List(rowNo, 2) = Format(qty, "0")
+        .List(rowNo, 3) = Format(rate, "0.00")
+        .List(rowNo, 4) = Format(amountBeforeGST, "0.00")
+        .List(rowNo, 5) = Format(gstPercent, "0.00")
+        .List(rowNo, 6) = Format(gstAmount, "0.00")
+        .List(rowNo, 7) = Format(totalWithGST, "0.00")
+
+        .ListIndex = rowNo
+        .ZOrder 0
+    End With
+
+    Me.Controls("txtQty").Text = ""
+    Me.Controls("txtRate").Text = ""
+
+    Call RecalculateMultipleItemsTotal
+    Call LoadProductDropdown
+
+End Sub
+
+Private Sub RemoveProductItem()
+
+    With Me.Controls("lstItems")
+        If .ListIndex = -1 Then
+            MsgBox "Select product item to remove", vbExclamation, "Remove Item"
+            Exit Sub
+        End If
+
+        .RemoveItem .ListIndex
+    End With
+
+    Call ReNumberItems
+    Call RecalculateMultipleItemsTotal
+    Call LoadProductDropdown
+
+End Sub
+
+Private Sub ReNumberItems()
+
+    Dim i As Long
+
+    With Me.Controls("lstItems")
+        For i = 0 To .ListCount - 1
+            .List(i, 0) = i + 1
+        Next i
+    End With
+
+End Sub
+
+Private Sub RecalculateMultipleItemsTotal()
+
+    Dim i As Long
+    Dim totalAmount As Double
+    Dim paidAmount As Double
+    Dim balanceAmount As Double
+
+    totalAmount = 0
+
+    With Me.Controls("lstItems")
+        For i = 0 To .ListCount - 1
+            totalAmount = totalAmount + Val(.List(i, 7))
+        Next i
+    End With
+
+    paidAmount = Val(Me.Controls("txtPaidAmount").Text)
+
+    If paidAmount < 0 Then paidAmount = 0
+    If paidAmount > totalAmount Then paidAmount = totalAmount
+
+    balanceAmount = totalAmount - paidAmount
+    If balanceAmount < 0 Then balanceAmount = 0
+
+    Me.Controls("txtPaidAmount").Locked = False
+    Me.Controls("txtPaidAmount").Enabled = True
+    Me.Controls("txtPaidAmount").BackColor = RGB(255, 255, 255)
+
+    isCleaningText = True
+    Me.Controls("txtTotalAmount").Text = Format(totalAmount, "0.00")
+    Me.Controls("txtPaidAmount").Text = Format(paidAmount, "0.00")
+    Me.Controls("txtBalanceAmount").Text = Format(balanceAmount, "0.00")
+    isCleaningText = False
+
+End Sub
+
+Private Function EnsureItemsAvailable() As Boolean
+
+    If ItemListCount() > 0 Then
+        EnsureItemsAvailable = True
+        Exit Function
+    End If
+
+    If Trim(Me.Controls("txtProduct").Text) = "" Then
+        MsgBox "Enter Product Name or click ADD ITEM", vbCritical, "Validation"
+        Me.Controls("txtProduct").SetFocus
+        EnsureItemsAvailable = False
+        Exit Function
+    End If
+
+    If Val(Me.Controls("txtQty").Text) <= 0 Then
+        MsgBox "Enter valid Quantity", vbCritical, "Validation"
+        Me.Controls("txtQty").SetFocus
+        EnsureItemsAvailable = False
+        Exit Function
+    End If
+
+    If Val(Me.Controls("txtRate").Text) <= 0 Then
+        MsgBox "Enter valid Rate", vbCritical, "Validation"
+        Me.Controls("txtRate").SetFocus
+        EnsureItemsAvailable = False
+        Exit Function
+    End If
+
+    Call AddProductItem
+    EnsureItemsAvailable = True
+
+End Function
+
+Private Function GetItemSummary() As String
+
+    Dim i As Long
+    Dim result As String
+
+    With Me.Controls("lstItems")
+        For i = 0 To .ListCount - 1
+            If result <> "" Then result = result & "; "
+            result = result & .List(i, 1) & " x " & .List(i, 2)
+        Next i
+    End With
+
+    GetItemSummary = result
+
+End Function
+
+Private Sub ClearInvoiceForm()
+
+    Me.Controls("txtCustomerName").Text = ""
+    Me.Controls("txtPhone").Text = ""
+    Me.Controls("txtEmail").Text = ""
+    Me.Controls("txtCity").Text = ""
+    Me.Controls("txtQty").Text = ""
+    Me.Controls("txtRate").Text = ""
+    Me.Controls("txtTotalAmount").Text = ""
+    Me.Controls("txtPaidAmount").Text = ""
+    Me.Controls("txtBalanceAmount").Text = ""
+
+    On Error Resume Next
+    Me.Controls("lstItems").Clear
+    On Error GoTo 0
+
+    Call LoadProductDropdown
+
+End Sub
+
+Private Function FindInvoiceRow(ByVal invoiceNo As String) As Long
+
+    Dim ws As Worksheet
+    Dim lastRow As Long
+    Dim r As Long
+
+    Set ws = ThisWorkbook.Worksheets("Invoice_Data")
+    lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
+
+    For r = 2 To lastRow
+        If Trim(ws.Cells(r, 1).Value) = Trim(invoiceNo) Then
+            FindInvoiceRow = r
+            Exit Function
+        End If
+    Next r
+
+    FindInvoiceRow = 0
+
+End Function
+
+Private Sub DeleteInvoiceItems(ByVal invoiceNo As String)
+
+    Dim itemWs As Worksheet
+    Dim lastRow As Long
+    Dim r As Long
+
+    Set itemWs = ThisWorkbook.Worksheets("Invoice_Items")
+    lastRow = itemWs.Cells(itemWs.Rows.Count, "A").End(xlUp).Row
+
+    For r = lastRow To 2 Step -1
+        If Trim(itemWs.Cells(r, 1).Value) = Trim(invoiceNo) Then
+            itemWs.Rows(r).Delete
+        End If
+    Next r
+
+End Sub
+
+Private Sub WriteInvoiceItems(ByVal invoiceNo As String)
+
+    Dim itemWs As Worksheet
+    Dim i As Long
+    Dim nextRow As Long
+
+    Set itemWs = ThisWorkbook.Worksheets("Invoice_Items")
+
+    Call DeleteInvoiceItems(invoiceNo)
+
+    With Me.Controls("lstItems")
+        For i = 0 To .ListCount - 1
+            nextRow = itemWs.Cells(itemWs.Rows.Count, "A").End(xlUp).Row + 1
+
+            itemWs.Cells(nextRow, 1).Value = invoiceNo
+            itemWs.Cells(nextRow, 2).Value = i + 1
+            itemWs.Cells(nextRow, 3).Value = .List(i, 1)
+            itemWs.Cells(nextRow, 4).Value = Val(.List(i, 2))
+            itemWs.Cells(nextRow, 5).Value = Val(.List(i, 3))
+            itemWs.Cells(nextRow, 6).Value = Val(.List(i, 4))
+            itemWs.Cells(nextRow, 7).Value = Val(.List(i, 5))
+            itemWs.Cells(nextRow, 8).Value = Val(.List(i, 6))
+            itemWs.Cells(nextRow, 9).Value = Val(.List(i, 7))
+        Next i
+    End With
+
+    itemWs.Range("E:F").NumberFormat = """" & RupeeSymbol() & """ #,##0.00"
+    itemWs.Range("H:I").NumberFormat = """" & RupeeSymbol() & """ #,##0.00"
+    itemWs.Columns("A:I").AutoFit
+
+End Sub
+
+
+Private Function GetProductNameFromSummary(ByVal summaryText As String) As String
+
+    Dim pos As Long
+
+    summaryText = Trim(summaryText)
+    pos = InStrRev(summaryText, " x ")
+
+    If pos > 0 Then
+        GetProductNameFromSummary = Trim(Left(summaryText, pos - 1))
+    Else
+        GetProductNameFromSummary = summaryText
+    End If
+
+End Function
+
+Private Function GetQtyFromSummary(ByVal summaryText As String) As Double
+
+    Dim pos As Long
+    Dim qtyText As String
+
+    summaryText = Trim(summaryText)
+    pos = InStrRev(summaryText, " x ")
+
+    If pos > 0 Then
+        qtyText = Trim(Mid(summaryText, pos + 3))
+        GetQtyFromSummary = Val(qtyText)
+    Else
+        GetQtyFromSummary = 1
+    End If
+
+    If GetQtyFromSummary <= 0 Then GetQtyFromSummary = 1
+
+End Function
+
+Private Sub LoadInvoiceItems(ByVal invoiceNo As String)
+
+    Dim itemWs As Worksheet
+    Dim dataWs As Worksheet
+    Dim lastRow As Long
+    Dim r As Long
+    Dim rowNo As Long
+    Dim invoiceRow As Long
+    Dim loadedCount As Long
+
+    Dim productSummary As String
+    Dim productName As String
+    Dim qty As Double
+    Dim totalWithGST As Double
+    Dim paidAmount As Double
+    Dim balanceAmount As Double
+    Dim gstPercent As Double
+    Dim amountBeforeGST As Double
+    Dim gstAmount As Double
+    Dim rate As Double
+
+    On Error Resume Next
+    Me.Controls("lstItems").Clear
+    On Error GoTo 0
+
+    Set itemWs = ThisWorkbook.Worksheets("Invoice_Items")
+    lastRow = itemWs.Cells(itemWs.Rows.Count, "A").End(xlUp).Row
+
+    'Load from Invoice_Items sheet
+    For r = 2 To lastRow
+
+        If Trim(CStr(itemWs.Cells(r, 1).Value)) = Trim(CStr(invoiceNo)) Then
+
+            With Me.Controls("lstItems")
+                .AddItem ""
+                rowNo = .ListCount - 1
+
+                .List(rowNo, 0) = rowNo + 1
+                .List(rowNo, 1) = itemWs.Cells(r, 3).Value
+                .List(rowNo, 2) = Format(Val(itemWs.Cells(r, 4).Value), "0")
+                .List(rowNo, 3) = Format(Val(itemWs.Cells(r, 5).Value), "0.00")
+                .List(rowNo, 4) = Format(Val(itemWs.Cells(r, 6).Value), "0.00")
+                .List(rowNo, 5) = Format(Val(itemWs.Cells(r, 7).Value), "0.00")
+                .List(rowNo, 6) = Format(Val(itemWs.Cells(r, 8).Value), "0.00")
+                .List(rowNo, 7) = Format(Val(itemWs.Cells(r, 9).Value), "0.00")
+            End With
+
+            loadedCount = loadedCount + 1
+
+        End If
+
+    Next r
+
+    If loadedCount > 0 Then
+        Call ReNumberItems
+        Exit Sub
+    End If
+
+    'Fallback: older invoice saved only in Invoice_Data
+    Set dataWs = ThisWorkbook.Worksheets("Invoice_Data")
+    invoiceRow = FindInvoiceRow(invoiceNo)
+
+    If invoiceRow = 0 Then Exit Sub
+
+    productSummary = Trim(CStr(dataWs.Cells(invoiceRow, 9).Value))
+
+    If productSummary = "" Then Exit Sub
+
+    productName = GetProductNameFromSummary(productSummary)
+    qty = GetQtyFromSummary(productSummary)
+
+    totalWithGST = Val(dataWs.Cells(invoiceRow, 11).Value)
+    paidAmount = Val(dataWs.Cells(invoiceRow, 12).Value)
+    balanceAmount = Val(dataWs.Cells(invoiceRow, 13).Value)
+
+    If totalWithGST <= 0 Then totalWithGST = paidAmount + balanceAmount
+
+    gstPercent = Val(Me.Controls("txtGST").Value)
+    If gstPercent <= 0 Then gstPercent = 18
+
+    amountBeforeGST = totalWithGST / (1 + (gstPercent / 100))
+    gstAmount = totalWithGST - amountBeforeGST
+
+    If qty <= 0 Then qty = 1
+    rate = amountBeforeGST / qty
+
+    With Me.Controls("lstItems")
+        .AddItem ""
+        rowNo = .ListCount - 1
+
+        .List(rowNo, 0) = rowNo + 1
+        .List(rowNo, 1) = productName
+        .List(rowNo, 2) = Format(qty, "0")
+        .List(rowNo, 3) = Format(rate, "0.00")
+        .List(rowNo, 4) = Format(amountBeforeGST, "0.00")
+        .List(rowNo, 5) = Format(gstPercent, "0.00")
+        .List(rowNo, 6) = Format(gstAmount, "0.00")
+        .List(rowNo, 7) = Format(totalWithGST, "0.00")
+    End With
+
+    Call ReNumberItems
+
+End Sub
+
+Private Sub SaveInvoiceData()
+
+    Dim ws As Worksheet
+    Dim nextRow As Long
+    Dim invoiceNo As String
+
+    Set ws = ThisWorkbook.Worksheets("Invoice_Data")
+
+    invoiceNo = Me.Controls("txtInvoiceNo").Text
+
+    If FindInvoiceRow(invoiceNo) > 0 Then
+        MsgBox "This Invoice No already exists. Use UPDATE button.", vbCritical, "Duplicate Invoice"
+        Exit Sub
+    End If
+
+    If Trim(Me.Controls("txtCustomerName").Text) = "" Then
+        MsgBox "Enter Customer Name", vbCritical, "Validation"
+        Me.Controls("txtCustomerName").SetFocus
+        Exit Sub
+    End If
+    If Trim(Me.Controls("txtCustomerName").Text) = "" Then
+    MsgBox "Enter Customer Name", vbCritical, "Validation"
+    Me.Controls("txtCustomerName").SetFocus
+    Exit Sub
+    End If
+
+    If Not ValidatePhoneNumber() Then Exit Sub
+    If Not EnsureItemsAvailable() Then Exit Sub
+
+    Call RecalculateMultipleItemsTotal
+
+    nextRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row + 1
+
+    ws.Cells(nextRow, 1).Value = invoiceNo
+    ws.Cells(nextRow, 2).Value = Me.Controls("txtInvoiceDate").Text
+    ws.Cells(nextRow, 3).Value = Me.Controls("txtCustomerName").Text
+    ws.Cells(nextRow, 4).Value = Me.Controls("txtPhone").Text
+    ws.Cells(nextRow, 5).Value = Me.Controls("txtEmail").Text
+    ws.Cells(nextRow, 6).Value = Me.Controls("txtCity").Text
+    ws.Cells(nextRow, 7).Value = Me.Controls("cmbStatus").Value
+    ws.Cells(nextRow, 8).Value = Me.Controls("cmbPaymentMode").Value
+    ws.Cells(nextRow, 9).Value = GetItemSummary()
+    ws.Cells(nextRow, 10).Value = ItemListCount()
+    ws.Cells(nextRow, 11).Value = Val(Me.Controls("txtTotalAmount").Text)
+    ws.Cells(nextRow, 12).Value = Val(Me.Controls("txtPaidAmount").Text)
+    ws.Cells(nextRow, 13).Value = Val(Me.Controls("txtBalanceAmount").Text)
+
+    Call WriteInvoiceItems(invoiceNo)
+
+    ws.Range("K:M").NumberFormat = """" & RupeeSymbol() & """ #,##0.00"
+    ws.Columns("A:M").AutoFit
+
+    MsgBox "Invoice saved successfully", vbInformation, "Success"
+
+    Call ClearInvoiceForm
+    Call SetDefaultValues
+
+End Sub
+
+Private Sub SearchInvoiceData(Optional ByVal showMessage As Boolean = True)
+
+    Dim ws As Worksheet
+    Dim rowNo As Long
+    Dim invoiceNo As String
+    Dim totalAmount As Double
+    Dim paidAmount As Double
+    Dim balanceAmount As Double
+
+    Set ws = ThisWorkbook.Worksheets("Invoice_Data")
+    invoiceNo = Trim(Me.Controls("txtInvoiceNo").Text)
+
+    If invoiceNo = "" Then
+        MsgBox "Enter Invoice No to search", vbCritical, "Search"
+        Me.Controls("txtInvoiceNo").SetFocus
+        Exit Sub
+    End If
+
+    rowNo = FindInvoiceRow(invoiceNo)
+
+    If rowNo = 0 Then
+        MsgBox "Invoice not found", vbExclamation, "Search"
+        currentInvoiceRow = 0
+        Exit Sub
+    End If
+
+    currentInvoiceRow = rowNo
+
+    Me.Controls("txtInvoiceNo").Text = ws.Cells(rowNo, 1).Value
+    Me.Controls("txtInvoiceDate").Text = ws.Cells(rowNo, 2).Value
+    Me.Controls("txtCustomerName").Text = ws.Cells(rowNo, 3).Value
+    Me.Controls("txtPhone").Text = ws.Cells(rowNo, 4).Value
+    Me.Controls("txtEmail").Text = ws.Cells(rowNo, 5).Value
+    Me.Controls("txtCity").Text = ws.Cells(rowNo, 6).Value
+
+    Me.Controls("cmbStatus").Value = ws.Cells(rowNo, 7).Value
+    Me.Controls("cmbPaymentMode").Value = ws.Cells(rowNo, 8).Value
+
+    totalAmount = Val(ws.Cells(rowNo, 11).Value)
+    paidAmount = Val(ws.Cells(rowNo, 12).Value)
+    balanceAmount = Val(ws.Cells(rowNo, 13).Value)
+
+    Me.Controls("txtTotalAmount").Text = Format(totalAmount, "0.00")
+    Me.Controls("txtPaidAmount").Text = Format(paidAmount, "0.00")
+    Me.Controls("txtBalanceAmount").Text = Format(balanceAmount, "0.00")
+
+    Me.Controls("txtProduct").ListIndex = -1
+    Me.Controls("txtQty").Text = ""
+    Me.Controls("txtRate").Text = ""
+
+    'Important: load product items after invoice details
+    Call LoadInvoiceItems(invoiceNo)
+
+    If ItemListCount() > 0 Then
+        Call ReNumberItems
+        Call RecalculateMultipleItemsTotal
+    End If
+
+    Call LoadProductDropdown
+
+    If showMessage Then
+        MsgBox "Invoice loaded successfully", vbInformation, "Search"
+    End If
+
+End Sub
+
+Private Sub UpdateInvoiceData()
+
+    Dim ws As Worksheet
+    Dim invoiceNo As String
+
+    Set ws = ThisWorkbook.Worksheets("Invoice_Data")
+    invoiceNo = Me.Controls("txtInvoiceNo").Text
+
+    If currentInvoiceRow = 0 Then
+        currentInvoiceRow = FindInvoiceRow(invoiceNo)
+    End If
+
+    If currentInvoiceRow = 0 Then
+        MsgBox "Please search invoice before update", vbCritical, "Update"
+        Exit Sub
+    End If
+
+    If Trim(Me.Controls("txtCustomerName").Text) = "" Then
+        MsgBox "Enter Customer Name", vbCritical, "Validation"
+        Me.Controls("txtCustomerName").SetFocus
+        Exit Sub
+    End If
+
+    If Not EnsureItemsAvailable() Then Exit Sub
+
+    Call RecalculateMultipleItemsTotal
+
+    ws.Cells(currentInvoiceRow, 1).Value = invoiceNo
+    ws.Cells(currentInvoiceRow, 2).Value = Me.Controls("txtInvoiceDate").Text
+    ws.Cells(currentInvoiceRow, 3).Value = Me.Controls("txtCustomerName").Text
+    ws.Cells(currentInvoiceRow, 4).Value = Me.Controls("txtPhone").Text
+    ws.Cells(currentInvoiceRow, 5).Value = Me.Controls("txtEmail").Text
+    ws.Cells(currentInvoiceRow, 6).Value = Me.Controls("txtCity").Text
+    ws.Cells(currentInvoiceRow, 7).Value = Me.Controls("cmbStatus").Value
+    ws.Cells(currentInvoiceRow, 8).Value = Me.Controls("cmbPaymentMode").Value
+    ws.Cells(currentInvoiceRow, 9).Value = GetItemSummary()
+    ws.Cells(currentInvoiceRow, 10).Value = ItemListCount()
+    ws.Cells(currentInvoiceRow, 11).Value = Val(Me.Controls("txtTotalAmount").Text)
+    ws.Cells(currentInvoiceRow, 12).Value = Val(Me.Controls("txtPaidAmount").Text)
+    ws.Cells(currentInvoiceRow, 13).Value = Val(Me.Controls("txtBalanceAmount").Text)
+
+    Call WriteInvoiceItems(invoiceNo)
+
+    ws.Range("K:M").NumberFormat = """" & RupeeSymbol() & """ #,##0.00"
+    ws.Columns("A:M").AutoFit
+
+    MsgBox "Invoice updated successfully", vbInformation, "Update"
+
+    Call ClearInvoiceForm
+    Call SetDefaultValues
+
+End Sub
+
+Private Sub DeleteInvoiceData()
+
+    Dim ws As Worksheet
+    Dim invoiceNo As String
+    Dim confirm As VbMsgBoxResult
+
+    Set ws = ThisWorkbook.Worksheets("Invoice_Data")
+    invoiceNo = Me.Controls("txtInvoiceNo").Text
+
+    If currentInvoiceRow = 0 Then
+        currentInvoiceRow = FindInvoiceRow(invoiceNo)
+    End If
+
+    If currentInvoiceRow = 0 Then
+        MsgBox "Please search invoice before delete", vbCritical, "Delete"
+        Exit Sub
+    End If
+
+    confirm = MsgBox("Are you sure you want to delete this invoice?", vbYesNo + vbQuestion, "Delete")
+
+    If confirm = vbNo Then Exit Sub
+
+    ws.Rows(currentInvoiceRow).Delete
+    Call DeleteInvoiceItems(invoiceNo)
+
+    MsgBox "Invoice deleted successfully", vbInformation, "Delete"
+
+    Call ClearInvoiceForm
+    Call SetDefaultValues
+
+End Sub
+
+
+Private Sub txtInvoiceNoEvt_AfterUpdate()
+
+    Dim invoiceNo As String
+
+    invoiceNo = Trim(Me.Controls("txtInvoiceNo").Text)
+
+    If invoiceNo = "" Then Exit Sub
+
+    If FindInvoiceRow(invoiceNo) > 0 Then
+        Call SearchInvoiceData(False)
+    End If
+
+End Sub
+
+Private Sub cmbStatusEvt_Change()
+
+    Dim totalAmount As Double
+    Dim paymentStatus As String
+
+    paymentStatus = LCase$(Trim$(Me.Controls("cmbStatus").Value))
+    totalAmount = Val(Me.Controls("txtTotalAmount").Text)
+
+    Me.Controls("txtPaidAmount").Locked = False
+    Me.Controls("txtPaidAmount").Enabled = True
+    Me.Controls("txtPaidAmount").BackColor = RGB(255, 255, 255)
+
+    isCleaningText = True
+
+    If paymentStatus = "paid" Then
+        Me.Controls("txtPaidAmount").Text = Format(totalAmount, "0.00")
+    ElseIf paymentStatus = "pending" Then
+        Me.Controls("txtPaidAmount").Text = Format(0, "0.00")
+    End If
+
+    isCleaningText = False
+
+    Call CalculateInvoiceAmount
+
+End Sub
+
+Private Sub txtQtyEvt_Change()
+    Call KeepOnlyDigits(txtQtyEvt)
+    Call CalculateInvoiceAmount
+End Sub
+
+Private Sub txtRateEvt_Change()
+    Call KeepOnlyDigits(txtRateEvt)
+    Call CalculateInvoiceAmount
+End Sub
+
+
+
+Private Sub txtPaidEvt_Change()
+
+    Dim totalAmount As Double
+    Dim paidAmount As Double
+    Dim balanceAmount As Double
+
+    If isCleaningText Then Exit Sub
+
+    Call KeepOnlyDigits(txtPaidEvt)
+
+    totalAmount = Val(Me.Controls("txtTotalAmount").Text)
+    paidAmount = Val(Me.Controls("txtPaidAmount").Text)
+
+    If paidAmount > totalAmount Then paidAmount = totalAmount
+    If paidAmount < 0 Then paidAmount = 0
+
+    balanceAmount = totalAmount - paidAmount
+    If balanceAmount < 0 Then balanceAmount = 0
+
+    isCleaningText = True
+    Me.Controls("txtPaidAmount").Text = Format(paidAmount, "0.00")
+    Me.Controls("txtBalanceAmount").Text = Format(balanceAmount, "0.00")
+    isCleaningText = False
+
+End Sub
+
+Private Sub cmdAddItemEvt_Click()
+    Call AddProductItem
+End Sub
+
+Private Sub cmdRemoveItemEvt_Click()
+    Call RemoveProductItem
+End Sub
+
+Private Sub cmdSaveEvt_Click()
+    Call SaveInvoiceData
+End Sub
+
+Private Sub cmdSearchEvt_Click()
+    Call SearchInvoiceData(True)
+End Sub
+
+Private Sub cmdUpdateEvt_Click()
+    Call UpdateInvoiceData
+End Sub
+
+Private Sub cmdDeleteEvt_Click()
+    Call DeleteInvoiceData
+End Sub
+
+Private Sub cmdClearEvt_Click()
+    Call ClearInvoiceForm
+    Call SetDefaultValues
+End Sub
+
+Private Sub cmdPDFEvt_Click()
+    Call GenerateInvoicePDF
+End Sub
+
+Private Sub cmdCloseEvt_Click()
+    Unload Me
+End Sub
+Private Sub GenerateInvoicePDF()
+
+    Dim ws As Worksheet
+    Dim pdfFolder As String
+    Dim pdfPath As String
+    Dim invoiceNo As String
+    Dim customerName As String
+
+    On Error GoTo PDF_Error
+
+    If Trim(Me.Controls("txtInvoiceNo").Text) = "" Then
+        MsgBox "Invoice No is missing", vbCritical, "PDF Error"
+        Exit Sub
+    End If
+
+    If Trim(Me.Controls("txtCustomerName").Text) = "" Then
+        MsgBox "Enter Customer Name before generating PDF", vbCritical, "PDF Error"
+        Me.Controls("txtCustomerName").SetFocus
+        Exit Sub
+    End If
+
+    If Not EnsureItemsAvailable() Then Exit Sub
+    
+
+    Call RecalculateMultipleItemsTotal
+
+    invoiceNo = CleanFileName(Me.Controls("txtInvoiceNo").Text)
+    customerName = CleanFileName(Me.Controls("txtCustomerName").Text)
+
+    If ThisWorkbook.Path = "" Then
+        pdfFolder = Environ$("USERPROFILE") & "\Desktop"
+    Else
+        pdfFolder = ThisWorkbook.Path
+    End If
+
+    pdfPath = pdfFolder & "\" & invoiceNo & "_" & customerName & ".pdf"
+
+    If Dir(pdfPath) <> "" Then
+        On Error Resume Next
+        Kill pdfPath
+
+        If Err.Number <> 0 Then
+            MsgBox "Please close the already opened PDF file and try again:" & vbCrLf & pdfPath, _
+                   vbCritical, "PDF Already Open"
+            Err.Clear
+            Exit Sub
+        End If
+
+        On Error GoTo PDF_Error
+    End If
+
+        'Set ws = GetInvoicePrintSheet()
+        Set ws = GetInvoicePrintSheet()
+
+        Call PrepareInvoicePrintSheet(ws)
+        Call AddCompanyLogoInPDF(ws)
+        
+        ''Call AddCompanyLogoFromGoogleDrive(ws)
+        ws.Activate
+
+    Application.DisplayAlerts = False
+
+    ws.ExportAsFixedFormat _
+        Type:=xlTypePDF, _
+        fileName:=pdfPath, _
+        Quality:=xlQualityStandard, _
+        IncludeDocProperties:=True, _
+        IgnorePrintAreas:=False, _
+        OpenAfterPublish:=True
+
+    Application.DisplayAlerts = True
+
+    MsgBox "PDF invoice created successfully:" & vbCrLf & pdfPath, vbInformation, "PDF Created"
+
+    Exit Sub
+
+PDF_Error:
+
+    Application.DisplayAlerts = True
+
+    MsgBox "PDF export failed." & vbCrLf & _
+           "Reason: " & Err.Description & vbCrLf & vbCrLf & _
+           "Please close opened PDF file and try again.", _
+           vbCritical, "PDF Error"
+
+End Sub
+
+
+
+Private Sub AddInvoicePDFExtraDetails(ByVal ws As Worksheet)
+
+    Dim totalAmount As Double
+    Dim amountWords As String
+    Dim startRow As Long
+    Dim tickMark As String
+
+    tickMark = ChrW(&H2713)
+
+    totalAmount = GetInvoiceTotalAmount(ws)
+    amountWords = AmountToWordsIndian(totalAmount)
+
+    startRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row + 2
+
+    If startRow < 38 Then startRow = 38
+
+    With ws
+        .Range("A" & startRow & ":H" & startRow + 5).Clear
+
+        .Range("A" & startRow & ":C" & startRow).Merge
+        .Range("A" & startRow).Value = "Original for Recipient"
+        .Range("A" & startRow).Font.Bold = True
+        .Range("A" & startRow).Font.Size = 12
+        .Range("A" & startRow).HorizontalAlignment = xlLeft
+
+        .Range("A" & startRow + 1 & ":H" & startRow + 2).Merge
+        .Range("A" & startRow + 1).Value = "Total Amount in Words: " & amountWords
+        .Range("A" & startRow + 1).Font.Bold = True
+        .Range("A" & startRow + 1).Font.Size = 12
+        .Range("A" & startRow + 1).WrapText = True
+        .Range("A" & startRow + 1).VerticalAlignment = xlCenter
+
+        .Range("F" & startRow & ":H" & startRow).Merge
+        .Range("F" & startRow).Value = tickMark & " Digitally Signed"
+        .Range("F" & startRow).Font.Bold = True
+        .Range("F" & startRow).Font.Size = 12
+        .Range("F" & startRow).HorizontalAlignment = xlCenter
+
+        .Range("F" & startRow + 1 & ":H" & startRow + 1).Merge
+        .Range("F" & startRow + 1).Value = "Signed on: " & Format(Now, "dd-mmm-yyyy hh:mm:ss AM/PM")
+        .Range("F" & startRow + 1).Font.Size = 9
+        .Range("F" & startRow + 1).HorizontalAlignment = xlCenter
+
+        .Range("F" & startRow + 2 & ":H" & startRow + 2).Merge
+        .Range("F" & startRow + 2).Value = "This is a computer generated invoice"
+        .Range("F" & startRow + 2).Font.Size = 8
+        .Range("F" & startRow + 2).Font.Italic = True
+        .Range("F" & startRow + 2).HorizontalAlignment = xlCenter
+
+        .Range("A" & startRow & ":H" & startRow + 2).Borders.LineStyle = xlContinuous
+        .Range("A" & startRow & ":H" & startRow + 2).Borders.Weight = xlThin
+
+        .Range("A" & startRow & ":H" & startRow + 2).Interior.Color = RGB(248, 250, 252)
+
+        .PageSetup.PrintArea = .Range("A1:H" & startRow + 3).Address
+    End With
+
+End Sub
+
+
+Private Function GetInvoiceTotalAmount(ByVal ws As Worksheet) As Double
+
+    Dim amountText As String
+    Dim cell As Range
+    Dim i As Long
+    Dim labels As Variant
+
+    amountText = ControlTextSafe("txtGrandTotal")
+    If CleanAmount(amountText) > 0 Then
+        GetInvoiceTotalAmount = CleanAmount(amountText)
+        Exit Function
+    End If
+
+    amountText = ControlTextSafe("txtTotalAmount")
+    If CleanAmount(amountText) > 0 Then
+        GetInvoiceTotalAmount = CleanAmount(amountText)
+        Exit Function
+    End If
+
+    amountText = ControlTextSafe("txtNetAmount")
+    If CleanAmount(amountText) > 0 Then
+        GetInvoiceTotalAmount = CleanAmount(amountText)
+        Exit Function
+    End If
+
+    amountText = ControlTextSafe("txtFinalTotal")
+    If CleanAmount(amountText) > 0 Then
+        GetInvoiceTotalAmount = CleanAmount(amountText)
+        Exit Function
+    End If
+
+    labels = Array("grand total", "total amount", "net amount", "invoice total")
+
+    For Each cell In ws.UsedRange.Cells
+        If Not IsError(cell.Value) Then
+            For i = LBound(labels) To UBound(labels)
+                If InStr(1, LCase(CStr(cell.Value)), labels(i), vbTextCompare) > 0 Then
+                    GetInvoiceTotalAmount = CleanAmount(CStr(cell.Offset(0, 1).Value))
+                    If GetInvoiceTotalAmount = 0 Then
+                        GetInvoiceTotalAmount = CleanAmount(CStr(cell.Offset(0, 2).Value))
+                    End If
+                    If GetInvoiceTotalAmount > 0 Then Exit Function
+                End If
+            Next i
+        End If
+    Next cell
+
+    GetInvoiceTotalAmount = 0
+
+End Function
+
+
+Private Function ControlTextSafe(ByVal controlName As String) As String
+
+    On Error Resume Next
+
+    ControlTextSafe = Me.Controls(controlName).Text
+
+    If Err.Number <> 0 Then
+        Err.Clear
+        ControlTextSafe = Me.Controls(controlName).Value
+    End If
+
+    If Err.Number <> 0 Then
+        Err.Clear
+        ControlTextSafe = Me.Controls(controlName).Caption
+    End If
+
+    If Err.Number <> 0 Then
+        Err.Clear
+        ControlTextSafe = ""
+    End If
+
+    On Error GoTo 0
+
+End Function
+
+
+Private Function CleanAmount(ByVal amountText As String) As Double
+
+    Dim s As String
+
+    s = CStr(amountText)
+    s = Replace(s, "?", "")
+    s = Replace(s, "Rs.", "")
+    s = Replace(s, "Rs", "")
+    s = Replace(s, "INR", "")
+    s = Replace(s, ",", "")
+    s = Replace(s, " ", "")
+
+    If IsNumeric(s) Then
+        CleanAmount = CDbl(s)
+    Else
+        CleanAmount = Val(s)
+    End If
+
+End Function
+
+
+Private Function AmountToWordsIndian(ByVal amount As Double) As String
+
+    Dim rupees As Long
+    Dim paise As Long
+    Dim result As String
+
+    rupees = Fix(amount)
+    paise = Round((amount - rupees) * 100, 0)
+
+    If paise = 100 Then
+        rupees = rupees + 1
+        paise = 0
+    End If
+
+    result = "Rupees " & IndianNumberToWords(rupees)
+
+    If paise > 0 Then
+        result = result & " and " & IndianNumberToWords(paise) & " Paise"
+    End If
+
+    AmountToWordsIndian = result & " Only"
+
+End Function
+
+
+Private Function IndianNumberToWords(ByVal numberValue As Long) As String
+
+    Dim crore As Long
+    Dim lakh As Long
+    Dim thousand As Long
+    Dim hundred As Long
+    Dim result As String
+
+    If numberValue = 0 Then
+        IndianNumberToWords = "Zero"
+        Exit Function
+    End If
+
+    crore = numberValue \ 10000000
+    numberValue = numberValue Mod 10000000
+
+    lakh = numberValue \ 100000
+    numberValue = numberValue Mod 100000
+
+    thousand = numberValue \ 1000
+    numberValue = numberValue Mod 1000
+
+    hundred = numberValue
+
+    If crore > 0 Then
+        result = result & NumberBelowThousand(crore) & " Crore "
+    End If
+
+    If lakh > 0 Then
+        result = result & NumberBelowThousand(lakh) & " Lakh "
+    End If
+
+    If thousand > 0 Then
+        result = result & NumberBelowThousand(thousand) & " Thousand "
+    End If
+
+    If hundred > 0 Then
+        result = result & NumberBelowThousand(hundred)
+    End If
+
+    IndianNumberToWords = Trim(result)
+
+End Function
+
+
+Private Function NumberBelowThousand(ByVal numberValue As Long) As String
+
+    Dim ones As Variant
+    Dim tens As Variant
+    Dim result As String
+
+    ones = Array("", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", _
+                 "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", _
+                 "Seventeen", "Eighteen", "Nineteen")
+
+    tens = Array("", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety")
+
+    If numberValue >= 100 Then
+        result = ones(numberValue \ 100) & " Hundred "
+        numberValue = numberValue Mod 100
+    End If
+
+    If numberValue >= 20 Then
+        result = result & tens(numberValue \ 10) & " "
+        numberValue = numberValue Mod 10
+    End If
+
+    If numberValue > 0 Then
+        result = result & ones(numberValue)
+    End If
+
+    NumberBelowThousand = Trim(result)
+
+End Function
+
+Private Sub AddSignatureValidStamp(ByVal ws As Worksheet)
+
+    Dim stampRow As Long
+    Dim stampLeft As Double
+    Dim stampTop As Double
+    Dim stampWidth As Double
+    Dim stampHeight As Double
+
+    Dim shpBox As Shape
+    Dim shpTitle As Shape
+    Dim shpDetails As Shape
+    Dim line1 As Shape
+    Dim line2 As Shape
+
+    Dim signedBy As String
+    Dim signedTime As String
+
+    signedBy = "LOGANATHAN K"
+    signedTime = Format(Now, "dd-mm-yyyy hh:mm:ss AM/PM")
+
+    On Error Resume Next
+    ws.Shapes("Signature_Valid_Box").Delete
+    ws.Shapes("Signature_Valid_Title").Delete
+    ws.Shapes("Signature_Valid_Details").Delete
+    ws.Shapes("Signature_Valid_Tick_1").Delete
+    ws.Shapes("Signature_Valid_Tick_2").Delete
+    On Error GoTo 0
+
+    stampRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row + 2
+
+    If stampRow < 38 Then stampRow = 38
+
+    ws.Rows(stampRow & ":" & stampRow + 5).RowHeight = 22
+
+    stampLeft = ws.Range("F" & stampRow).Left
+    stampTop = ws.Range("F" & stampRow).Top
+    stampWidth = ws.Range("F" & stampRow & ":H" & stampRow + 5).Width
+    stampHeight = ws.Range("F" & stampRow & ":H" & stampRow + 5).Height
+
+    Set shpBox = ws.Shapes.AddShape(msoShapeRectangle, stampLeft, stampTop, stampWidth, stampHeight)
+
+    With shpBox
+        .Name = "Signature_Valid_Box"
+        .Fill.ForeColor.RGB = RGB(255, 255, 255)
+        .Line.ForeColor.RGB = RGB(80, 80, 80)
+        .Line.Weight = 1.25
+        .Line.DashStyle = msoLineDash
+        .Placement = xlMoveAndSize
+    End With
+
+    Set shpTitle = ws.Shapes.AddTextBox(msoTextOrientationHorizontal, stampLeft + 8, stampTop + 4, stampWidth - 16, 30)
+
+    With shpTitle
+        .Name = "Signature_Valid_Title"
+        .TextFrame.Characters.Text = "Signature valid"
+        .TextFrame.Characters.Font.Size = 22
+        .TextFrame.Characters.Font.Bold = False
+        .TextFrame.Characters.Font.Color = RGB(0, 0, 0)
+        .TextFrame.MarginLeft = 0
+        .TextFrame.MarginRight = 0
+        .TextFrame.MarginTop = 0
+        .TextFrame.MarginBottom = 0
+        .Fill.Visible = msoFalse
+        .Line.Visible = msoFalse
+        .Placement = xlMoveAndSize
+    End With
+
+    Set shpDetails = ws.Shapes.AddTextBox(msoTextOrientationHorizontal, stampLeft + 12, stampTop + 42, stampWidth - 24, stampHeight - 48)
+
+    With shpDetails
+        .Name = "Signature_Valid_Details"
+        .TextFrame.Characters.Text = "Digitally signed by" & vbCrLf & _
+                                     signedBy & vbCrLf & _
+                                     "Invoice Management System" & vbCrLf & _
+                                     "Date: " & signedTime
+        .TextFrame.Characters.Font.Size = 9
+        .TextFrame.Characters.Font.Bold = True
+        .TextFrame.Characters.Font.Color = RGB(0, 0, 0)
+        .TextFrame.MarginLeft = 0
+        .TextFrame.MarginRight = 0
+        .TextFrame.MarginTop = 0
+        .TextFrame.MarginBottom = 0
+        .Fill.Visible = msoFalse
+        .Line.Visible = msoFalse
+        .Placement = xlMoveAndSize
+    End With
+
+    Set line1 = ws.Shapes.AddLine(stampLeft + 65, stampTop + 78, stampLeft + 98, stampTop + 108)
+
+    With line1
+        .Name = "Signature_Valid_Tick_1"
+        .Line.ForeColor.RGB = RGB(0, 120, 0)
+        .Line.Weight = 11
+        .Line.Transparency = 0.05
+        .Placement = xlMoveAndSize
+    End With
+
+    Set line2 = ws.Shapes.AddLine(stampLeft + 96, stampTop + 108, stampLeft + 168, stampTop + 35)
+
+    With line2
+        .Name = "Signature_Valid_Tick_2"
+        .Line.ForeColor.RGB = RGB(0, 120, 0)
+        .Line.Weight = 11
+        .Line.Transparency = 0.05
+        .Placement = xlMoveAndSize
+    End With
+
+    ws.PageSetup.PrintArea = ws.Range("A1:H" & stampRow + 6).Address
+
+End Sub
+
+Private Function GetInvoicePrintSheet() As Worksheet
+
+    Dim ws As Worksheet
+
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets("Invoice_Print")
+    On Error GoTo 0
+
+    If ws Is Nothing Then
+        Set ws = ThisWorkbook.Worksheets.Add
+        ws.Name = "Invoice_Print"
+    End If
+
+    Set GetInvoicePrintSheet = ws
+
+End Function
+Private Sub AddInvoiceDetailsBelowPaymentMode(ByVal ws As Worksheet, ByVal startRow As Long, ByVal totalAmount As Double)
+
+    Dim amountWords As String
+    Dim tickMark As String
+
+    tickMark = ChrW(&H2713)
+    amountWords = AmountToWordsIndian(totalAmount)
+
+    With ws
+        .Range("A" & startRow & ":D" & startRow + 2).UnMerge
+        .Range("A" & startRow & ":D" & startRow + 2).ClearContents
+
+        .Rows(startRow).RowHeight = 20
+        .Rows(startRow + 1).RowHeight = 24
+        .Rows(startRow + 2).RowHeight = 24
+
+        .Range("A" & startRow & ":B" & startRow).Merge
+        .Range("A" & startRow).Value = "Original for Recipient"
+
+        .Range("C" & startRow & ":D" & startRow).Merge
+        .Range("C" & startRow).Value = tickMark & " Digitally Signed"
+
+        .Range("A" & startRow + 1 & ":D" & startRow + 2).Merge
+        .Range("A" & startRow + 1).Value = "Total Amount in Words: " & amountWords
+
+        With .Range("A" & startRow & ":D" & startRow + 2)
+            .Font.Name = "Bookman Old Style"
+            .Font.Size = 8
+            .Font.Bold = True
+            .HorizontalAlignment = xlCenter
+            .VerticalAlignment = xlCenter
+            .WrapText = True
+            .Interior.Color = RGB(248, 250, 252)
+            .Borders.LineStyle = xlContinuous
+            .Borders.Weight = xlThin
+        End With
+
+        .Range("C" & startRow).Font.Color = RGB(0, 120, 0)
+    End With
+
+End Sub
+
+Private Sub PrepareInvoicePrintSheet(ByVal ws As Worksheet)
+
+    Dim shp As Shape
+    Dim itemRow As Long
+    Dim i As Long
+    Dim lastItemRow As Long
+    Dim summaryRow As Long
+    Dim thankYouRow As Long
+    Dim qrStartRow As Long
+    Dim lastPrintRow As Long
+    Dim totalWithGST As Double
+    Dim paidAmount As Double
+    Dim balanceWithGST As Double
+    Dim paymentStatus As String
+
+    ws.Cells.Clear
+
+    For Each shp In ws.Shapes
+        shp.Delete
+    Next shp
+
+    With ws
+
+        .Cells.Font.Name = "Bookman Old Style"
+        .Cells.Font.Size = 12
+        .Cells.HorizontalAlignment = xlCenter
+        .Cells.VerticalAlignment = xlCenter
+
+        '================ HEADER ================
+        .Range("A1:H1").Merge
+        .Range("A1").Value = "INVOICE BILLING SYSTEM"
+        .Range("A1").Font.Size = 20
+        .Range("A1").Font.Bold = True
+        .Range("A1").HorizontalAlignment = xlCenter
+        .Range("A1").Interior.Color = RGB(30, 64, 175)
+        .Range("A1").Font.Color = RGB(255, 255, 255)
+
+        .Range("A2:H2").Merge
+        .Range("A2").Value = PAYEE_NAME
+        .Range("A2").Font.Size = 14
+        .Range("A2").Font.Bold = True
+
+        .Range("A3:H3").Merge
+        .Range("A3").Value = COMPANY_ADDRESS
+
+        .Range("A4:H4").Merge
+        .Range("A4").Value = COMPANY_GSTIN & " | " & COMPANY_PHONE & " | " & COMPANY_EMAIL
+
+        .Range("A1:H4").Borders.LineStyle = xlContinuous
+
+        '================ CUSTOMER DETAILS ================
+        .Range("A6:B6").Merge
+        .Range("A6").Value = "Invoice No"
+        .Range("C6:D6").Merge
+        .Range("C6").Value = Me.Controls("txtInvoiceNo").Text
+
+        .Range("E6:H7").UnMerge
+
+        .Range("E6:F6").Merge
+        .Range("E6").Value = "Invoice Date:"
+        
+        .Range("G6:H6").Merge
+        .Range("G6").Value = Format(Date, "dddd, d mmmm, yyyy")
+        
+        .Range("E7:F7").Merge
+        .Range("E7").Value = "Invoice Time:"
+        
+        .Range("G7:H7").Merge
+        .Range("G7").Value = Format(Now, "hh:mm:ss AM/PM")
+        
+        With .Range("E6:H7")
+            .Font.Name = "Bookman Old Style"
+            .Font.Size = 9
+            .Font.Bold = True
+            .HorizontalAlignment = xlCenter
+            .VerticalAlignment = xlCenter
+            .WrapText = False
+        End With
+
+        .Range("A8:B8").Merge
+        .Range("A8").Value = "Customer Name"
+        .Range("C8:D8").Merge
+        .Range("C8").Value = Me.Controls("txtCustomerName").Text
+
+        .Range("A9:B9").Merge
+        .Range("A9").Value = "Phone"
+        .Range("C9:D9").Merge
+        .Range("C9").Value = FormatPhoneNumber(Me.Controls("txtPhone").Text)
+
+        .Range("A10:B10").Merge
+        .Range("A10").Value = "Email"
+        .Range("C10:D10").Merge
+        .Range("C10").Value = Me.Controls("txtEmail").Text
+
+        .Range("A11:B11").Merge
+        .Range("A11").Value = "City"
+        .Range("C11:D11").Merge
+        .Range("C11").Value = Me.Controls("txtCity").Text
+
+        With .Range("A6:D11")
+            .Borders.LineStyle = xlContinuous
+            .HorizontalAlignment = xlCenter
+            .VerticalAlignment = xlCenter
+        End With
+
+        With .Range("E6:H7")
+            .Borders.LineStyle = xlContinuous
+            .HorizontalAlignment = xlCenter
+            .VerticalAlignment = xlCenter
+        End With
+
+        .Range("A6:B11").Font.Bold = True
+        .Range("E6:F7").Font.Bold = True
+
+        '================ PRODUCT TABLE ================
+        .Range("A13:H13").Value = Array("S.No", "Product", "Qty", "Rate", "Amount", "GST%", "GST Amt", "Total")
+        .Range("A13:H13").Font.Bold = True
+        .Range("A13:H13").Interior.Color = RGB(37, 99, 235)
+        .Range("A13:H13").Font.Color = RGB(255, 255, 255)
+        .Range("A13:H13").HorizontalAlignment = xlCenter
+        .Range("A13:H13").VerticalAlignment = xlCenter
+
+        itemRow = 14
+        totalWithGST = 0
+
+        With Me.Controls("lstItems")
+            For i = 0 To .ListCount - 1
+                ws.Cells(itemRow, 1).Value = i + 1
+                ws.Cells(itemRow, 2).Value = Trim$(CStr(.List(i, 1)))
+                ws.Cells(itemRow, 3).Value = Val(.List(i, 2))
+                ws.Cells(itemRow, 4).Value = Val(.List(i, 3))
+                ws.Cells(itemRow, 5).Value = Val(.List(i, 4))
+                ws.Cells(itemRow, 6).Value = Val(.List(i, 5))
+                ws.Cells(itemRow, 7).Value = Val(.List(i, 6))
+                ws.Cells(itemRow, 8).Value = Val(.List(i, 7))
+
+                totalWithGST = totalWithGST + Val(.List(i, 7))
+                itemRow = itemRow + 1
+            Next i
+        End With
+
+        lastItemRow = itemRow - 1
+
+        If lastItemRow >= 14 Then
+        
+            With .Range("A13:H" & lastItemRow)
+                .Borders.LineStyle = xlContinuous
+                .Borders.Weight = xlThin
+                .HorizontalAlignment = xlCenter
+                .VerticalAlignment = xlCenter
+                .WrapText = False
+                .ShrinkToFit = False
+            End With
+        
+            'Product column must be visible, not hidden, not wrapped, not cut
+            With .Range("B14:B" & lastItemRow)
+                .WrapText = False
+                .ShrinkToFit = False
+                .HorizontalAlignment = xlCenter
+                .VerticalAlignment = xlCenter
+                .Font.Name = "Bookman Old Style"
+                .Font.Size = 9
+            End With
+        
+            .Columns("B").Hidden = False
+            .Columns("B").ColumnWidth = 22
+        
+            .Range("D14:E" & lastItemRow).NumberFormat = """" & RupeeSymbol() & """ #,##0.00"
+            .Range("G14:H" & lastItemRow).NumberFormat = """" & RupeeSymbol() & """ #,##0.00"
+            .Range("F14:F" & lastItemRow).NumberFormat = "0.00""%"""
+        
+        End If
+
+        '================ SUMMARY ================
+        paymentStatus = LCase$(Trim$(Me.Controls("cmbStatus").Value))
+        paidAmount = Val(Me.Controls("txtPaidAmount").Text)
+
+        If paymentStatus = "paid" Then
+            paidAmount = totalWithGST
+        ElseIf paymentStatus = "pending" Then
+            paidAmount = 0
+        End If
+
+        If paidAmount > totalWithGST Then paidAmount = totalWithGST
+        If paidAmount < 0 Then paidAmount = 0
+
+        balanceWithGST = totalWithGST - paidAmount
+        If balanceWithGST < 0 Then balanceWithGST = 0
+
+        Me.Controls("txtTotalAmount").Text = Format(totalWithGST, "0.00")
+        Me.Controls("txtPaidAmount").Text = Format(paidAmount, "0.00")
+        Me.Controls("txtBalanceAmount").Text = Format(balanceWithGST, "0.00")
+
+        summaryRow = itemRow + 2
+
+        .Range("A" & summaryRow & ":B" & summaryRow).Merge
+        .Range("A" & summaryRow).Value = "Grand Total"
+        .Range("C" & summaryRow & ":D" & summaryRow).Merge
+        .Range("C" & summaryRow).Value = totalWithGST
+
+        .Range("A" & summaryRow + 1 & ":B" & summaryRow + 1).Merge
+        .Range("A" & summaryRow + 1).Value = "Paid Amount"
+        .Range("C" & summaryRow + 1 & ":D" & summaryRow + 1).Merge
+        .Range("C" & summaryRow + 1).Value = paidAmount
+
+        .Range("A" & summaryRow + 2 & ":B" & summaryRow + 2).Merge
+        .Range("A" & summaryRow + 2).Value = "Balance"
+        .Range("C" & summaryRow + 2 & ":D" & summaryRow + 2).Merge
+        .Range("C" & summaryRow + 2).Value = balanceWithGST
+
+        .Range("A" & summaryRow + 3 & ":B" & summaryRow + 3).Merge
+        .Range("A" & summaryRow + 3).Value = "Payment Status"
+        .Range("C" & summaryRow + 3 & ":D" & summaryRow + 3).Merge
+        .Range("C" & summaryRow + 3).Value = Me.Controls("cmbStatus").Value
+
+        .Range("A" & summaryRow + 4 & ":B" & summaryRow + 4).Merge
+        .Range("A" & summaryRow + 4).Value = "Payment Mode"
+        .Range("C" & summaryRow + 4 & ":D" & summaryRow + 4).Merge
+        .Range("C" & summaryRow + 4).Value = Me.Controls("cmbPaymentMode").Value
+
+        With .Range("A" & summaryRow & ":D" & summaryRow + 4)
+            .Borders.LineStyle = xlContinuous
+            .HorizontalAlignment = xlCenter
+            .VerticalAlignment = xlCenter
+        End With
+
+        .Range("A" & summaryRow & ":B" & summaryRow + 4).Font.Bold = True
+        .Range("C" & summaryRow & ":D" & summaryRow + 2).NumberFormat = """" & RupeeSymbol() & """ #,##0.00"
+        '================ ORIGINAL / AMOUNT WORDS BELOW PAYMENT MODE ================
+        .Range("A" & summaryRow + 6 & ":D" & summaryRow + 8).UnMerge
+        .Range("A" & summaryRow + 6 & ":D" & summaryRow + 8).ClearContents
+        
+        .Range("A" & summaryRow + 6 & ":B" & summaryRow + 6).Merge
+        .Range("A" & summaryRow + 6).Value = "Original for Recipient"
+        
+        .Range("C" & summaryRow + 6 & ":D" & summaryRow + 6).Merge
+        .Range("C" & summaryRow + 6).Value = ChrW(&H2713) & " Digitally Signed"
+        
+        .Range("A" & summaryRow + 7 & ":D" & summaryRow + 8).Merge
+        .Range("A" & summaryRow + 7).Value = "Total Amount in Words: " & AmountToWordsIndian(totalWithGST)
+        
+        With .Range("A" & summaryRow + 6 & ":D" & summaryRow + 8)
+            .Font.Name = "Bookman Old Style"
+            .Font.Size = 8
+            .Font.Bold = True
+            .HorizontalAlignment = xlCenter
+            .VerticalAlignment = xlCenter
+            .WrapText = True
+            .Interior.Color = RGB(248, 250, 252)
+            .Borders.LineStyle = xlContinuous
+            .Borders.Weight = xlThin
+        End With
+        
+        .Range("C" & summaryRow + 6).Font.Color = RGB(0, 120, 0)
+
+        '================ QR CODE ================
+        '================ QR CODE ================
+        '================ QR CODE ================
+        qrStartRow = summaryRow
+        
+        'QR code starts same row as Grand Total
+        Call AddUPIQRCodeToInvoice(ws, balanceWithGST, qrStartRow)
+        
+        'Signature valid below QR
+        Call AddSignatureValidModelBelowQR(ws, qrStartRow + 10)
+        
+        'Original / Amount in words below Payment Mode
+        Call AddInvoiceDetailsBelowPaymentMode(ws, summaryRow + 6, totalWithGST)
+        
+        thankYouRow = qrStartRow + 17
+
+        '================ THANK YOU CENTER ================
+        .Range("A" & thankYouRow & ":H" & thankYouRow).UnMerge
+        .Range("A" & thankYouRow & ":H" & thankYouRow).Merge
+        
+        With .Range("A" & thankYouRow)
+            .Value = "Thank you for your business!"
+            .Font.Name = "Bookman Old Style"
+            .Font.Bold = True
+            .Font.Size = 10
+            .HorizontalAlignment = xlCenter
+            .VerticalAlignment = xlCenter
+        End With
+        
+        With .Range("A" & thankYouRow & ":H" & thankYouRow)
+            .Borders.LineStyle = xlContinuous
+            .Borders.Weight = xlThin
+            .Interior.Color = RGB(255, 255, 255)
+        End With
+
+        lastPrintRow = thankYouRow + 1
+        Call AddPDFOuter3DBorder(ws, lastPrintRow)
+
+        '================ COLUMN WIDTH FIX ================
+        .Columns("A").ColumnWidth = 10
+        .Columns("B").ColumnWidth = 15
+        .Columns("C").ColumnWidth = 12
+        .Columns("D").ColumnWidth = 14
+        .Columns("E").ColumnWidth = 14
+        .Columns("F").ColumnWidth = 12
+        .Columns("G").ColumnWidth = 14
+        .Columns("H").ColumnWidth = 14
+
+        .Rows("1:" & lastPrintRow).RowHeight = 20
+
+        With .Range("A1:H" & lastPrintRow)
+            .HorizontalAlignment = xlCenter
+            .VerticalAlignment = xlCenter
+        End With
+
+        '================ PAGE SETUP ================
+        With .PageSetup
+            .PrintArea = "$A$1:$H$" & lastPrintRow
+            .Orientation = xlLandscape
+            .Zoom = False
+            .FitToPagesWide = 1
+            .FitToPagesTall = 1
+            .CenterHorizontally = True
+            .CenterVertically = False
+            .PrintGridlines = False
+
+            .LeftMargin = Application.InchesToPoints(0.25)
+            .RightMargin = Application.InchesToPoints(0.25)
+            .TopMargin = Application.InchesToPoints(0.25)
+            .BottomMargin = Application.InchesToPoints(0.25)
+        End With
+
+    End With
+
+End Sub
+Private Sub AddPDFOuter3DBorder(ByVal ws As Worksheet, ByVal lastPrintRow As Long)
+
+    Dim borderRange As Range
+
+    Set borderRange = ws.Range("A1:H" & lastPrintRow)
+
+    'Remove old shape borders
+    On Error Resume Next
+    ws.Shapes("PDF_Outer_Shadow_1").Delete
+    ws.Shapes("PDF_Outer_Shadow_2").Delete
+    ws.Shapes("PDF_Outer_Main_Border").Delete
+    ws.Shapes("PDF_Outer_Inner_Border").Delete
+    On Error GoTo 0
+
+    'Clear only outside border first
+    With borderRange
+        .Borders(xlEdgeLeft).LineStyle = xlNone
+        .Borders(xlEdgeTop).LineStyle = xlNone
+        .Borders(xlEdgeRight).LineStyle = xlNone
+        .Borders(xlEdgeBottom).LineStyle = xlNone
+    End With
+
+    'Apply full outer border
+    With borderRange.Borders(xlEdgeLeft)
+        .LineStyle = xlContinuous
+        .Weight = xlMedium
+        .Color = RGB(30, 64, 175)
+    End With
+
+    With borderRange.Borders(xlEdgeTop)
+        .LineStyle = xlContinuous
+        .Weight = xlMedium
+        .Color = RGB(30, 64, 175)
+    End With
+
+    With borderRange.Borders(xlEdgeRight)
+        .LineStyle = xlContinuous
+        .Weight = xlMedium
+        .Color = RGB(30, 64, 175)
+    End With
+
+    With borderRange.Borders(xlEdgeBottom)
+        .LineStyle = xlContinuous
+        .Weight = xlMedium
+        .Color = RGB(30, 64, 175)
+    End With
+
+    ws.PageSetup.PrintArea = borderRange.Address
+
+End Sub
+Private Sub AddInvoiceDetailsAboveQR(ByVal ws As Worksheet, ByVal startRow As Long, ByVal totalAmount As Double)
+
+    Dim amountWords As String
+    Dim tickMark As String
+
+    tickMark = ChrW(&H2713)
+    amountWords = AmountToWordsIndian(totalAmount)
+
+    With ws
+        .Range("F" & startRow & ":H" & startRow + 2).UnMerge
+        .Range("F" & startRow & ":H" & startRow + 2).ClearContents
+
+        .Rows(startRow).RowHeight = 20
+        .Rows(startRow + 1).RowHeight = 22
+        .Rows(startRow + 2).RowHeight = 28
+
+        .Range("F" & startRow & ":G" & startRow).Merge
+        .Range("F" & startRow).Value = "Original for Recipient"
+
+        .Range("H" & startRow).Value = tickMark & " Digitally Signed"
+
+        .Range("F" & startRow + 1 & ":H" & startRow + 2).Merge
+        .Range("F" & startRow + 1).Value = "Total Amount in Words: " & amountWords
+
+        With .Range("F" & startRow & ":H" & startRow + 2)
+            .Font.Name = "Bookman Old Style"
+            .Font.Size = 8
+            .Font.Bold = True
+            .HorizontalAlignment = xlCenter
+            .VerticalAlignment = xlCenter
+            .WrapText = True
+            .Interior.Color = RGB(248, 250, 252)
+            .Borders.LineStyle = xlContinuous
+            .Borders.Weight = xlThin
+        End With
+
+        .Range("H" & startRow).Font.Color = RGB(0, 120, 0)
+    End With
+
+End Sub
+Private Sub AddInvoiceDetailsBelowQR(ByVal ws As Worksheet, ByVal startRow As Long)
+
+    Dim totalAmount As Double
+    Dim amountWords As String
+    Dim tickMark As String
+
+    tickMark = ChrW(&H2713)
+    totalAmount = GetInvoiceTotalAmount(ws)
+    amountWords = AmountToWordsIndian(totalAmount)
+
+    With ws
+        .Range("A" & startRow & ":H" & startRow + 1).ClearContents
+        .Range("A" & startRow & ":H" & startRow + 1).UnMerge
+        .Range("A" & startRow & ":H" & startRow + 1).Borders.LineStyle = xlContinuous
+        .Range("A" & startRow & ":H" & startRow + 1).Borders.Weight = xlThin
+        .Range("A" & startRow & ":H" & startRow + 1).Interior.Color = RGB(255, 255, 255)
+        .Range("A" & startRow & ":H" & startRow + 1).Font.Name = "Bookman Old Style"
+        .Range("A" & startRow & ":H" & startRow + 1).Font.Size = 9
+        .Range("A" & startRow & ":H" & startRow + 1).HorizontalAlignment = xlCenter
+        .Range("A" & startRow & ":H" & startRow + 1).VerticalAlignment = xlCenter
+
+        .Rows(startRow).RowHeight = 18
+        .Rows(startRow + 1).RowHeight = 20
+
+        .Range("A" & startRow & ":C" & startRow).Merge
+        .Range("A" & startRow).Value = "Original for Recipient"
+        .Range("A" & startRow).Font.Bold = True
+
+        .Range("F" & startRow & ":H" & startRow).Merge
+        .Range("F" & startRow).Value = tickMark & " Digitally Signed"
+        .Range("F" & startRow).Font.Bold = True
+
+        .Range("A" & startRow + 1 & ":H" & startRow + 1).Merge
+        .Range("A" & startRow + 1).Value = "Total Amount in Words: " & amountWords
+        .Range("A" & startRow + 1).Font.Bold = True
+    End With
+
+End Sub
+Private Sub AddSignatureValidModelBelowQR(ByVal ws As Worksheet, ByVal startRow As Long)
+
+    Dim stampLeft As Double
+    Dim stampTop As Double
+    Dim stampWidth As Double
+    Dim stampHeight As Double
+
+    Dim shpBox As Shape
+    Dim shpTitle As Shape
+    Dim shpDetails As Shape
+    Dim line1 As Shape
+    Dim line2 As Shape
+
+    Dim signedBy As String
+    Dim signedTime As String
+
+    signedBy = "LOGANATHAN K"
+    signedTime = Format(Now, "dd-mm-yyyy hh:mm:ss AM/PM")
+
+    On Error Resume Next
+    ws.Shapes("Signature_Model_Box").Delete
+    ws.Shapes("Signature_Model_Title").Delete
+    ws.Shapes("Signature_Model_Details").Delete
+    ws.Shapes("Signature_Model_Tick_1").Delete
+    ws.Shapes("Signature_Model_Tick_2").Delete
+    On Error GoTo 0
+
+    ws.Rows(startRow & ":" & startRow + 5).RowHeight = 22
+
+    stampLeft = ws.Range("F" & startRow).Left
+    stampTop = ws.Range("F" & startRow).Top
+    stampWidth = ws.Range("F" & startRow & ":H" & startRow + 5).Width
+    stampHeight = ws.Range("F" & startRow & ":H" & startRow + 5).Height
+
+    Set shpBox = ws.Shapes.AddShape(msoShapeRectangle, stampLeft, stampTop, stampWidth, stampHeight)
+
+    With shpBox
+        .Name = "Signature_Model_Box"
+        .Fill.ForeColor.RGB = RGB(255, 255, 255)
+        .Fill.Transparency = 0
+        .Line.ForeColor.RGB = RGB(70, 70, 70)
+        .Line.Weight = 1.25
+        .Line.DashStyle = msoLineDash
+        .Placement = xlMoveAndSize
+    End With
+
+    Set shpTitle = ws.Shapes.AddTextBox(msoTextOrientationHorizontal, stampLeft + 8, stampTop + 4, stampWidth - 16, 30)
+
+    With shpTitle
+        .Name = "Signature_Model_Title"
+        .TextFrame.Characters.Text = "Signature valid"
+        .TextFrame.Characters.Font.Name = "Bookman Old Style"
+        .TextFrame.Characters.Font.Size = 18
+        .TextFrame.Characters.Font.Bold = False
+        .TextFrame.Characters.Font.Color = RGB(0, 0, 0)
+        .TextFrame.HorizontalAlignment = xlHAlignLeft
+        .TextFrame.VerticalAlignment = xlVAlignCenter
+        .TextFrame.MarginLeft = 0
+        .TextFrame.MarginRight = 0
+        .TextFrame.MarginTop = 0
+        .TextFrame.MarginBottom = 0
+        .Fill.Visible = msoFalse
+        .Line.Visible = msoFalse
+        .Placement = xlMoveAndSize
+    End With
+
+    Set shpDetails = ws.Shapes.AddTextBox(msoTextOrientationHorizontal, stampLeft + 14, stampTop + 42, stampWidth - 28, stampHeight - 45)
+
+    With shpDetails
+        .Name = "Signature_Model_Details"
+        .TextFrame.Characters.Text = "Digitally signed by" & vbCrLf & _
+                                     signedBy & vbCrLf & _
+                                     "INVOICE MANAGEMENT SYSTEM" & vbCrLf & _
+                                     "Date: " & signedTime
+        .TextFrame.Characters.Font.Name = "Bookman Old Style"
+        .TextFrame.Characters.Font.Size = 8
+        .TextFrame.Characters.Font.Bold = True
+        .TextFrame.Characters.Font.Color = RGB(0, 0, 0)
+        .TextFrame.HorizontalAlignment = xlHAlignLeft
+        .TextFrame.VerticalAlignment = xlVAlignTop
+        .TextFrame.MarginLeft = 0
+        .TextFrame.MarginRight = 0
+        .TextFrame.MarginTop = 0
+        .TextFrame.MarginBottom = 0
+        .Fill.Visible = msoFalse
+        .Line.Visible = msoFalse
+        .Placement = xlMoveAndSize
+    End With
+
+    Set line1 = ws.Shapes.AddLine(stampLeft + 68, stampTop + 76, stampLeft + 102, stampTop + 108)
+
+    With line1
+        .Name = "Signature_Model_Tick_1"
+        .Line.ForeColor.RGB = RGB(0, 120, 0)
+        .Line.Weight = 12
+        .Line.Transparency = 0.05
+        .Placement = xlMoveAndSize
+    End With
+
+    Set line2 = ws.Shapes.AddLine(stampLeft + 100, stampTop + 108, stampLeft + 168, stampTop + 36)
+
+    With line2
+        .Name = "Signature_Model_Tick_2"
+        .Line.ForeColor.RGB = RGB(0, 120, 0)
+        .Line.Weight = 12
+        .Line.Transparency = 0.05
+        .Placement = xlMoveAndSize
+    End With
+
+    ws.PageSetup.PrintArea = ws.Range("A1:H" & startRow + 7).Address
+
+End Sub
+
+Private Function CleanFileName(ByVal fileName As String) As String
+
+    fileName = Replace(fileName, "\", "_")
+    fileName = Replace(fileName, "/", "_")
+    fileName = Replace(fileName, ":", "_")
+    fileName = Replace(fileName, "*", "_")
+    fileName = Replace(fileName, "?", "_")
+    fileName = Replace(fileName, """", "_")
+    fileName = Replace(fileName, "<", "_")
+    fileName = Replace(fileName, ">", "_")
+    fileName = Replace(fileName, "|", "_")
+    fileName = Trim(fileName)
+
+    If fileName = "" Then fileName = "Invoice"
+
+    CleanFileName = fileName
+
+End Function
+
+Private Function BuildInvoiceDetailsQRText(ByVal payAmount As Double) As String
+
+    Dim i As Long
+    Dim totalInvoice As Double
+    Dim paidAmount As Double
+    Dim qrText As String
+    Dim paymentStatus As String
+    Dim productName As String
+
+    paymentStatus = LCase$(Trim$(Me.Controls("cmbStatus").Value))
+
+    With Me.Controls("lstItems")
+        For i = 0 To .ListCount - 1
+            totalInvoice = totalInvoice + Val(.List(i, 7))
+        Next i
+    End With
+
+    paidAmount = Val(Me.Controls("txtPaidAmount").Text)
+
+    If paymentStatus = "paid" Then
+        paidAmount = totalInvoice
+        payAmount = 0
+    ElseIf paymentStatus = "pending" Then
+        paidAmount = 0
+        payAmount = totalInvoice
+    End If
+
+    If paidAmount > totalInvoice Then paidAmount = totalInvoice
+    If payAmount < 0 Then payAmount = 0
+
+    ' Short QR text = clear QR image like your sample
+    qrText = _
+        "INV:" & Me.Controls("txtInvoiceNo").Text & vbLf & _
+        "NAME:" & Me.Controls("txtCustomerName").Text & vbLf & _
+        "PH:" & Replace(FormatPhoneNumber(Me.Controls("txtPhone").Text), " ", "") & vbLf
+
+    With Me.Controls("lstItems")
+        For i = 0 To .ListCount - 1
+
+            productName = .List(i, 1)
+            productName = Replace(productName, ",", " ")
+            productName = Replace(productName, vbCrLf, " ")
+            productName = Replace(productName, vbLf, " ")
+            productName = Left$(productName, 18)
+
+            qrText = qrText & _
+                "P" & (i + 1) & ":" & productName & _
+                "|Q:" & .List(i, 2) & _
+                "|R:" & Format(Val(.List(i, 3)), "0") & _
+                "|G:" & Format(Val(.List(i, 5)), "0") & _
+                "|T:" & Format(Val(.List(i, 7)), "0") & vbLf
+        Next i
+    End With
+
+    qrText = qrText & _
+        "TOTAL:" & Format(totalInvoice, "0") & vbLf & _
+        "PAID:" & Format(paidAmount, "0") & vbLf & _
+        "BAL:" & Format(payAmount, "0") & vbLf & _
+        "STATUS:" & Me.Controls("cmbStatus").Value
+
+    BuildInvoiceDetailsQRText = qrText
+
+End Function
+
+Private Function UrlEncodeText(ByVal textValue As String) As String
+
+    Dim i As Long
+    Dim ch As String
+    Dim code As Long
+    Dim result As String
+
+    For i = 1 To Len(textValue)
+
+        ch = Mid$(textValue, i, 1)
+        code = AscW(ch)
+
+        Select Case code
+            Case 48 To 57, 65 To 90, 97 To 122
+                result = result & ch
+            Case 32
+                result = result & "%20"
+            Case 10
+                result = result & "%0A"
+            Case 13
+                result = result & "%0D"
+            Case Else
+                result = result & "%" & Right$("0" & Hex(code), 2)
+        End Select
+
+    Next i
+
+    UrlEncodeText = result
+
+End Function
+
+Private Function CleanQRFileName(ByVal fileName As String) As String
+
+    fileName = Replace(fileName, "\", "_")
+    fileName = Replace(fileName, "/", "_")
+    fileName = Replace(fileName, ":", "_")
+    fileName = Replace(fileName, "*", "_")
+    fileName = Replace(fileName, "?", "_")
+    fileName = Replace(fileName, """", "_")
+    fileName = Replace(fileName, "<", "_")
+    fileName = Replace(fileName, ">", "_")
+    fileName = Replace(fileName, "|", "_")
+
+    CleanQRFileName = fileName
+
+End Function
+
+Private Function DownloadQRCodeImage(ByVal qrText As String, ByVal invoiceNo As String) As String
+
+    Dim qrURL As String
+    Dim qrPath As String
+    Dim result As Long
+    Dim encodedText As String
+
+    ' Better URL encoding
+    On Error Resume Next
+    encodedText = Application.WorksheetFunction.EncodeURL(qrText)
+    If encodedText = "" Then encodedText = UrlEncodeText(qrText)
+    On Error GoTo 0
+
+    ' Plain black and white QR code like your sample image
+    qrURL = "https://quickchart.io/qr?" & _
+            "text=" & encodedText & _
+            "&size=1000" & _
+            "&margin=1" & _
+            "&ecLevel=L" & _
+            "&dark=000000" & _
+            "&light=ffffff" & _
+            "&format=png"
+
+    qrPath = Environ$("TEMP") & "\" & CleanQRFileName(invoiceNo & "_Invoice_QR") & ".png"
+
+    On Error Resume Next
+    Kill qrPath
+    On Error GoTo 0
+
+    result = URLDownloadToFile(0, qrURL, qrPath, 0, 0)
+
+    If result = 0 And Dir(qrPath) <> "" Then
+        DownloadQRCodeImage = qrPath
+    Else
+        MsgBox "QR image download failed. Please check internet connection.", vbCritical, "QR Error"
+        DownloadQRCodeImage = ""
+    End If
+
+End Function
+
+Private Sub AddUPIQRCodeToInvoice(ByVal ws As Worksheet, ByVal payAmount As Double, ByVal startRow As Long)
+
+    Dim qrText As String
+    Dim qrPath As String
+    Dim invoiceNo As String
+    Dim shpQR As Shape
+    Dim panelBox As Range
+    Dim endRow As Long
+    Dim qrSize As Double
+    Dim qrLeft As Double
+    Dim qrTop As Double
+    Dim tickMark As String
+
+    invoiceNo = Me.Controls("txtInvoiceNo").Text
+    tickMark = ChrW(&H2713)
+
+    If payAmount < 0 Then payAmount = 0
+
+    qrSize = Application.CentimetersToPoints(4.49)
+
+    ws.Rows(startRow).RowHeight = 22
+    ws.Rows((startRow + 1) & ":" & (startRow + 6)).RowHeight = 24
+    ws.Rows(startRow + 7).RowHeight = 22
+    ws.Rows(startRow + 8).RowHeight = 20
+
+    endRow = startRow + 8
+
+    On Error Resume Next
+    ws.Shapes("shpUPIQRCode").Delete
+    On Error GoTo 0
+
+    With ws.Range("F" & startRow & ":H" & endRow)
+        .UnMerge
+        .ClearContents
+        .Interior.Color = RGB(255, 255, 255)
+        .Borders.LineStyle = xlNone
+        .HorizontalAlignment = xlCenter
+        .VerticalAlignment = xlCenter
+        .Font.Name = "Bookman Old Style"
+    End With
+
+    qrText = BuildInvoiceDetailsQRText(payAmount)
+    qrPath = DownloadQRCodeImage(qrText, invoiceNo)
+
+    ws.Range("F" & startRow & ":H" & startRow).Merge
+    With ws.Range("F" & startRow)
+        .Value = "SCAN INVOICE DETAILS"
+        .Font.Name = "Bookman Old Style"
+        .Font.Bold = True
+        .Font.Size = 10
+        .Font.Color = RGB(255, 255, 255)
+        .Interior.Color = RGB(30, 64, 175)
+        .HorizontalAlignment = xlCenter
+        .VerticalAlignment = xlCenter
+    End With
+
+    Set panelBox = ws.Range("F" & (startRow + 1) & ":H" & (startRow + 6))
+    panelBox.Merge
+    panelBox.Interior.Color = RGB(255, 255, 255)
+    panelBox.HorizontalAlignment = xlCenter
+    panelBox.VerticalAlignment = xlCenter
+    panelBox.Font.Name = "Bookman Old Style"
+
+    qrLeft = panelBox.Left + (panelBox.Width / 2) - (qrSize / 2)
+    qrTop = panelBox.Top + (panelBox.Height / 2) - (qrSize / 2)
+
+    If qrPath <> "" Then
+        Set shpQR = ws.Shapes.AddPicture( _
+            fileName:=qrPath, _
+            LinkToFile:=msoFalse, _
+            SaveWithDocument:=msoTrue, _
+            Left:=qrLeft, _
+            Top:=qrTop, _
+            Width:=qrSize, _
+            Height:=qrSize)
+
+        With shpQR
+            .Name = "shpUPIQRCode"
+            .Placement = xlMoveAndSize
+            .ZOrder msoBringToFront
+        End With
+    Else
+        panelBox.Value = "QR not generated"
+        panelBox.Font.Bold = True
+        panelBox.Font.Color = RGB(239, 68, 68)
+    End If
+
+    ws.Range("F" & (startRow + 7) & ":H" & (startRow + 7)).Merge
+    With ws.Range("F" & (startRow + 7))
+        .Value = tickMark & " QR Code Verified"
+        .Font.Name = "Bookman Old Style"
+        .Font.Bold = True
+        .Font.Size = 10
+        .Font.Color = RGB(0, 120, 0)
+        .HorizontalAlignment = xlCenter
+        .VerticalAlignment = xlCenter
+        .Interior.Color = RGB(240, 253, 244)
+    End With
+
+    ws.Range("F" & (startRow + 8) & ":H" & (startRow + 8)).Merge
+    With ws.Range("F" & (startRow + 8))
+        .Value = "Scan to view invoice details"
+        .Font.Name = "Bookman Old Style"
+        .Font.Size = 8
+        .Font.Italic = True
+        .Font.Color = RGB(71, 85, 105)
+        .HorizontalAlignment = xlCenter
+        .VerticalAlignment = xlCenter
+        .Interior.Color = RGB(255, 255, 255)
+    End With
+
+    With ws.Range("F" & startRow & ":H" & endRow)
+        .Borders.LineStyle = xlContinuous
+        .Borders.Weight = xlThin
+    End With
+
+End Sub
+Private Function FormatPhoneNumber(ByVal phoneNo As String) As String
+
+    phoneNo = Trim(phoneNo)
+    phoneNo = Replace(phoneNo, " ", "")
+
+    If Left(phoneNo, 3) = "+91" Then
+        FormatPhoneNumber = phoneNo
+    ElseIf Left(phoneNo, 2) = "91" And Len(phoneNo) = 12 Then
+        FormatPhoneNumber = "+" & phoneNo
+    ElseIf phoneNo = "" Then
+        FormatPhoneNumber = ""
+    Else
+        FormatPhoneNumber = "+91 " & phoneNo
+    End If
+
+End Function
+
+
+
+
+
+
+
+
+
+
+
+

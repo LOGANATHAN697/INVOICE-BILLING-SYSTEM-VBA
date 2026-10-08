@@ -1,0 +1,21 @@
+# Invoice Billing and Payment Analytics System
+
+A Microsoft Excel VBA UserForm project for creating invoices, managing product line items, tracking payment status, saving invoice data, searching existing invoices, updating/deleting invoices, and generating PDF invoices with a QR code.
+
+## Main Features
+
+* Dynamic VBA UserForm interface
+* Invoice number auto-generation
+* Customer and contact details entry
+* Product dropdown with auto rate fill
+* GST dropdown support
+* Multiple product line items
+* Automatic amount, GST amount, total, paid amount, and balance calculation
+* Save, search, update, and delete invoice records
+* PDF invoice generation
+* QR code generation for invoice details
+* Excel sheets used as local database
+
+## Code Explanation
+
+The VBA code is divided into sections for UI creation, validation, calculation, data saving, searching, updating, deleting, PDF generation, and QR code generation. Each procedure is explained one by one in the full README file.
